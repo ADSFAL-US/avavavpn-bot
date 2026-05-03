@@ -24,3 +24,12 @@ XCONTROLLER_API_KEY = os.getenv("XCONTROLLER_API_KEY", "")
 # Bot Settings
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@support")
 DEFAULT_TRIAL_DAYS = int(os.getenv("DEFAULT_TRIAL_DAYS", "3"))
+
+# YooKassa Payment Settings
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
+YOOKASSA_API_KEY = os.getenv("YOOKASSA_API_KEY", "")
+YOOKASSA_TEST_MODE = os.getenv("YOOKASSA_TEST_MODE", "true").lower() == "true"
+YOOKASSA_WEBHOOK_SECRET = os.getenv("YOOKASSA_WEBHOOK_SECRET", "")
+
+# Payment return URL (Telegram WebApp or bot link)
+PAYMENT_RETURN_URL = os.getenv("PAYMENT_RETURN_URL", "")
