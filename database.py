@@ -1,11 +1,14 @@
 # Avava VPN Bot - Database Model
 import sqlite3
-import os
+import logging
 from datetime import datetime, timedelta
 from config import DATABASE_PATH
 
+logger = logging.getLogger(__name__)
+
 
 # Tariff definitions
+# preset_id: links to X-Controller subscription preset (1 = lowest/free, 5 = highest)
 TARIFFS = {
     "youtube": {
         "id": "youtube",
@@ -20,6 +23,7 @@ TARIFFS = {
         "warp": False,
         "whitelist": False,
         "priority_support": False,
+        "preset_id": 1,  # Free/basic preset
     },
     "basic": {
         "id": "basic",
@@ -34,6 +38,7 @@ TARIFFS = {
         "warp": False,
         "whitelist": False,
         "priority_support": False,
+        "preset_id": 2,  # Basic preset
     },
     "premium": {
         "id": "premium",
@@ -48,6 +53,7 @@ TARIFFS = {
         "warp": False,
         "whitelist": True,
         "priority_support": False,
+        "preset_id": 3,  # Premium preset
     },
     "extreme": {
         "id": "extreme",
@@ -62,6 +68,7 @@ TARIFFS = {
         "warp": True,
         "whitelist": True,
         "priority_support": False,
+        "preset_id": 4,  # Extreme preset
     },
     "power": {
         "id": "power",
@@ -76,6 +83,7 @@ TARIFFS = {
         "warp": True,
         "whitelist": True,
         "priority_support": True,
+        "preset_id": 5,  # Power/maximum preset
     },
 }
 
@@ -128,10 +136,25 @@ class Database:
                 warp_enabled INTEGER DEFAULT 0,
                 whitelist_enabled INTEGER DEFAULT 0,
                 priority_support INTEGER DEFAULT 0,
+                panel_subscription_id INTEGER,
+                panel_sub_token TEXT,
+                payment_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
+        
+        # Migration: add new columns if they don't exist
+        try:
+            cursor.execute("SELECT panel_subscription_id FROM subscriptions LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE subscriptions ADD COLUMN panel_subscription_id INTEGER")
+            cursor.execute("ALTER TABLE subscriptions ADD COLUMN panel_sub_token TEXT")
+            cursor.execute("ALTER TABLE subscriptions ADD COLUMN payment_id TEXT")
+            self.conn.commit()
+            logger.info("Migrated subscriptions table with panel fields")
+        except Exception as e:
+            logger.warning(f"Migration check error (may be already migrated): {e}")
 
         # VPN connections table (for tracking active connections)
         cursor.execute("""
@@ -238,10 +261,20 @@ class Database:
         """Get the active subscription for a user."""
         cursor = self.conn.cursor()
         cursor.execute(
-            """SELECT * FROM subscriptions 
-               WHERE user_id = ? AND status = 'active' 
+            """SELECT * FROM subscriptions
+               WHERE user_id = ? AND status = 'active'
                ORDER BY id DESC LIMIT 1""",
             (user_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_subscription_by_id(self, subscription_id):
+        """Get subscription by ID."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM subscriptions WHERE id = ?",
+            (subscription_id,)
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -255,40 +288,76 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def create_subscription(self, user_id, tariff_id):
-        """Create a new subscription for a user."""
+    def create_subscription(
+        self,
+        user_id,
+        tariff_id,
+        ends_at=None,
+        speed_mbps=None,
+        traffic_limit_mb=None,
+        warp_enabled=None,
+        whitelist_enabled=None,
+        priority_support=None,
+        panel_subscription_id=None,
+        panel_sub_token=None,
+        payment_id=None,
+    ):
+        """Create a new subscription for a user with full panel integration."""
         tariff = TARIFFS.get(tariff_id)
         if not tariff:
             raise ValueError(f"Unknown tariff: {tariff_id}")
 
         now = datetime.now()
-        ends_at = now + timedelta(days=tariff["duration_days"])
+        if ends_at is None:
+            ends_at = now + timedelta(days=tariff["duration_days"])
         
-        traffic_limit_mb = None
-        if tariff["traffic_limit_gb"]:
+        if traffic_limit_mb is None and tariff["traffic_limit_gb"]:
             traffic_limit_mb = tariff["traffic_limit_gb"] * 1024  # GB to MB
+        
+        if speed_mbps is None:
+            speed_mbps = self._parse_speed(tariff["speed"])
+        
+        if warp_enabled is None:
+            warp_enabled = int(tariff["warp"])
+        if whitelist_enabled is None:
+            whitelist_enabled = int(tariff["whitelist"])
+        if priority_support is None:
+            priority_support = int(tariff["priority_support"])
         
         cursor = self.conn.cursor()
         cursor.execute(
             """INSERT INTO subscriptions 
                (user_id, tariff_id, status, ends_at, speed_mbps, 
-                traffic_limit_mb, warp_enabled, whitelist_enabled, priority_support)
-               VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?)""",
+                traffic_limit_mb, warp_enabled, whitelist_enabled, priority_support,
+                panel_subscription_id, panel_sub_token, payment_id)
+               VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id, tariff_id,
-                ends_at.isoformat(),
-                self._parse_speed(tariff["speed"]),
+                ends_at.isoformat() if ends_at else None,
+                speed_mbps,
                 traffic_limit_mb,
-                int(tariff["warp"]),
-                int(tariff["whitelist"]),
-                int(tariff["priority_support"]),
+                warp_enabled,
+                whitelist_enabled,
+                priority_support,
+                panel_subscription_id,
+                panel_sub_token,
+                payment_id,
             )
         )
         subscription_id = cursor.lastrowid
         self.conn.commit()
 
-        # Log admin activity if admin created it
-        return {"id": subscription_id, "status": "created"}
+        logger.info(
+            f"Created subscription: id={subscription_id}, user={user_id}, "
+            f"tariff={tariff_id}, panel_id={panel_subscription_id}"
+        )
+        
+        return {
+            "id": subscription_id,
+            "status": "created",
+            "panel_subscription_id": panel_subscription_id,
+            "panel_sub_token": panel_sub_token,
+        }
 
     def cancel_subscription(self, subscription_id, user_id):
         """Cancel a subscription."""
