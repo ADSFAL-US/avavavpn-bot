@@ -17,9 +17,15 @@ VPN_CONFIG = {
     "protocol": os.getenv("VPN_PROTOCOL", "udp"),
 }
 
-# X-Controller Integration
+# X-Controller Integration (Subscription Panel)
 XCONTROLLER_URL = os.getenv("XCONTROLLER_URL", "http://localhost:8080")
-XCONTROLLER_API_KEY = os.getenv("XCONTROLLER_API_KEY", "")
+XCONTROLLER_USERNAME = os.getenv("XCONTROLLER_USERNAME", "admin")
+XCONTROLLER_PASSWORD = os.getenv("XCONTROLLER_PASSWORD", "")
+
+# YooKassa Payment Integration
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
+YOOKASSA_API_KEY = os.getenv("YOOKASSA_API_KEY", "")
+YOOKASSA_TEST_MODE = os.getenv("YOOKASSA_TEST_MODE", "true").lower() == "true"
 
 # Bot Settings
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@support")

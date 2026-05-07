@@ -1,5 +1,6 @@
 # Avava VPN Bot - Redesigned UI (Single Message Interface)
 import logging
+import uuid
 
 from telegram import (
     Update,
@@ -17,6 +18,8 @@ from telegram.ext import (
 
 import config
 from database import db, TARIFFS
+from yookassa import YooKassaAPI, PaymentStorage, PAYMENT_STATUS_SUCCEEDED, PAYMENT_STATUS_CANCELLED
+from xcontroller_client import XControllerClient, SubscriptionManager
 
 # Configure logging
 logging.basicConfig(
@@ -25,10 +28,46 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ===== INITIALIZE CLIENTS =====
+# YooKassa payment client
+yookassa = None
+if config.YOOKASSA_SHOP_ID and config.YOOKASSA_API_KEY:
+    try:
+        yookassa = YooKassaAPI(
+            shop_id=config.YOOKASSA_SHOP_ID,
+            api_key=config.YOOKASSA_API_KEY,
+            test_mode=config.YOOKASSA_TEST_MODE,
+        )
+        logger.info("YooKassa client initialized (test_mode=%s)", config.YOOKASSA_TEST_MODE)
+    except Exception as e:
+        logger.error("Failed to initialize YooKassa: %s", e)
+else:
+    logger.warning("YooKassa not configured - payments will be disabled")
+
+# Payment storage
+payment_storage = PaymentStorage(db.conn)
+
+# X-Controller client
+xcontroller = None
+if config.XCONTROLLER_URL and config.XCONTROLLER_PASSWORD:
+    try:
+        xcontroller = XControllerClient()
+        logger.info("X-Controller client initialized: %s", config.XCONTROLLER_URL)
+    except Exception as e:
+        logger.error("Failed to initialize X-Controller: %s", e)
+else:
+    logger.warning("X-Controller not configured - subscription creation will be disabled")
+
+# Subscription manager
+subscription_manager = None
+if xcontroller:
+    subscription_manager = SubscriptionManager(db, xcontroller)
+
 # ===== STATE MANAGEMENT =====
 STATE_IDLE = "idle"
 STATE_FIND_USER = "find_user"
 STATE_BAN_REASON = "ban_reason"
+STATE_PAYMENT_PENDING = "payment_pending"
 
 def is_admin(user_id: int) -> bool:
     """Check if user is admin."""
@@ -467,6 +506,106 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         text, reply_markup = build_main_menu(update.effective_user.id)
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
 
+async def _handle_free_subscription(update: Update, user_id: int, tariff_id: str, tariff: dict):
+    """Handle free subscription (youtube tariff) creation."""
+    query = update.callback_query
+    
+    # Cancel existing subscription
+    active_sub = db.get_active_subscription(user_id)
+    if active_sub:
+        db.cancel_subscription(active_sub["id"], user_id)
+    
+    try:
+        # Create subscription via SubscriptionManager
+        result = subscription_manager.create_subscription(
+            user_id=user_id,
+            tariff_id=tariff_id,
+        )
+        
+        if not result.get("success"):
+            error = result.get("error", "Unknown error")
+            logger.error(f"Free subscription creation failed: {error}")
+            await query.edit_message_text(
+                f"❌ <b>Ошибка активации</b>\n\n{error}"
+            )
+            return
+        
+        sub_link = result.get("sub_link", "N/A")
+        text = (
+            f"✅ <b>Подписка активирована!</b>\n\n"
+            f"📌 {tariff['name']}\n"
+            f"⚡ {tariff['speed']}\n"
+            f"⏱ {tariff['duration_days']} дней\n\n"
+            f"🔗 <b>Ваша ссылка для подключения:</b>\n"
+            f"<code>{sub_link}</code>\n\n"
+            f"Скопируйте ссылку и импортируйте в приложение VPN."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 Инструкция по настройке", url=sub_link)],
+            [btn("📊 Моя подписка", "menu_subscription"), back_btn()]
+        ]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    except Exception as e:
+        logger.exception(f"Error creating free subscription: {e}")
+        await query.edit_message_text(f"❌ <b>Ошибка:</b> {str(e)}")
+
+
+async def _create_paid_subscription(update: Update, user_id: int, tariff_id: str, tariff: dict, payment_id: str):
+    """Create subscription after successful payment."""
+    query = update.callback_query
+    
+    # Cancel existing subscription
+    active_sub = db.get_active_subscription(user_id)
+    if active_sub:
+        db.cancel_subscription(active_sub["id"], user_id)
+    
+    try:
+        # Create subscription via SubscriptionManager
+        result = subscription_manager.create_subscription(
+            user_id=user_id,
+            tariff_id=tariff_id,
+            payment_id=payment_id,
+        )
+        
+        if not result.get("success"):
+            error = result.get("error", "Unknown error")
+            logger.error(f"Paid subscription creation failed: {error}")
+            await query.edit_message_text(
+                f"❌ <b>Ошибка активации подписки</b>\n\n"
+                f"{error}\n\n"
+                f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
+                parse_mode="HTML"
+            )
+            return
+        
+        sub_link = result.get("sub_link", "N/A")
+        text = (
+            f"✅ <b>Оплата успешна!</b>\n\n"
+            f"📌 {tariff['name']}\n"
+            f"⚡ {tariff['speed']}\n"
+            f"⏱ {tariff['duration_days']} дней\n\n"
+            f"🔗 <b>Ваша ссылка для подключения:</b>\n"
+            f"<code>{sub_link}</code>\n\n"
+            f"Скопируйте ссылку и импортируйте в приложение VPN."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 Инструкция по настройке", url=sub_link)],
+            [btn("📊 Моя подписка", "menu_subscription"), back_btn()]
+        ]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    except Exception as e:
+        logger.exception(f"Error creating paid subscription: {e}")
+        await query.edit_message_text(
+            f"❌ <b>Ошибка активации</b>\n\n"
+            f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
+            parse_mode="HTML"
+        )
+
+
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Main callback query router."""
     query = update.callback_query
@@ -530,25 +669,147 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Тариф не найден")
             return
         
-        # Cancel existing subscription
-        active_sub = db.get_active_subscription(user_id)
-        if active_sub:
-            db.cancel_subscription(active_sub["id"], user_id)
-        
-        try:
-            db.create_subscription(user_id, tariff_id)
-            text = (
-                f"✅ <b>Подписка активирована!</b>\n\n"
-                f"📌 {tariff['name']}\n"
-                f"⚡ {tariff['speed']}\n"
-                f"⏱ {tariff['duration_days']} дней\n\n"
-                f"Приятного использования!"
+        # Check if X-Controller is configured
+        if not subscription_manager:
+            await query.edit_message_text(
+                "❌ <b>Сервис временно недоступен</b>\n\n"
+                "Система подписок не настроена.\n"
+                "Пожалуйста, попробуйте позже или обратитесь в поддержку."
             )
-        except Exception as e:
-            text = f"❌ Ошибка: {str(e)}"
+            return
         
-        keyboard = [[btn("📊 Моя подписка", "menu_subscription"), back_btn()]]
+        # Free tariff (youtube) - create immediately without payment
+        if tariff.get("price", 0) == 0:
+            await _handle_free_subscription(update, user_id, tariff_id, tariff)
+            return
+        
+        # Paid tariff - create payment
+        if not yookassa:
+            await query.edit_message_text(
+                "❌ <b>Платежная система недоступна</b>\n\n"
+                "Пожалуйста, попробуйте позже или обратитесь в поддержку."
+            )
+            return
+        
+        # Create YooKassa payment
+        order_id = f"avava_{user_id}_{tariff_id}_{uuid.uuid4().hex[:8]}"
+        amount = tariff.get("price", 0)
+        
+        payment_result = yookassa.create_payment(
+            amount=amount,
+            description=f"Avava VPN - {tariff['name']}",
+            user_id=user_id,
+            tariff_id=tariff_id,
+            order_id=order_id,
+        )
+        
+        if not payment_result.get("success"):
+            error_msg = payment_result.get("error", "Unknown error")
+            logger.error(f"Payment creation failed: {error_msg}")
+            await query.edit_message_text(
+                f"❌ <b>Ошибка создания платежа</b>\n\n"
+                f"{error_msg}\n\n"
+                f"Пожалуйста, попробуйте позже или обратитесь в поддержку."
+            )
+            return
+        
+        # Store payment in database
+        payment_storage.create_payment_record(
+            order_id=order_id,
+            user_id=user_id,
+            tariff_id=tariff_id,
+            amount=amount,
+            payment_id=payment_result.get("payment_id"),
+        )
+        
+        # Show payment link
+        payment_url = payment_result.get("payment_url")
+        text = (
+            f"💳 <b>Оплата тарифа</b>\n\n"
+            f"📌 {tariff['name']}\n"
+            f"💰 Сумма: {amount} руб.\n\n"
+            f"Нажмите кнопку ниже для оплаты.\n"
+            f"После оплаты нажмите «Проверить оплату»."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("💳 Перейти к оплате", url=payment_url)],
+            [btn("🔄 Проверить оплату", f"check_payment_{order_id}")],
+            [back_btn("menu_tariffs")],
+        ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+        # Store state for payment check
+        context.user_data["pending_order_id"] = order_id
+        context.user_data["state"] = STATE_PAYMENT_PENDING
+    
+    elif data.startswith("check_payment_"):
+        order_id = data[14:]  # Remove "check_payment_"
+        
+        # Get payment from database
+        payment_record = payment_storage.get_payment_by_order(order_id)
+        if not payment_record:
+            await query.edit_message_text("❌ Платеж не найден")
+            return
+        
+        # Check if already processed
+        if payment_record.get("status") == "completed":
+            await query.edit_message_text(
+                "✅ <b>Платеж уже обработан</b>\n\n"
+                "Ваша подписка активна."
+            )
+            return
+        
+        # Check payment status with YooKassa
+        payment_id = payment_record.get("payment_id")
+        if not payment_id:
+            await query.edit_message_text("❌ Ошибка: ID платежа не найден")
+            return
+        
+        check_result = yookassa.check_payment(payment_id)
+        
+        if check_result.get("error"):
+            await query.edit_message_text(
+                f"❌ <b>Ошибка проверки</b>\n\n"
+                f"{check_result['error']}"
+            )
+            return
+        
+        status = check_result.get("status")
+        paid = check_result.get("paid", False)
+        
+        if status == PAYMENT_STATUS_SUCCEEDED and paid:
+            # Payment successful - create subscription
+            tariff_id = payment_record.get("tariff_id")
+            tariff = TARIFFS.get(tariff_id)
+            
+            if not tariff:
+                await query.edit_message_text("❌ Тариф не найден")
+                return
+            
+            # Update payment status
+            payment_storage.update_payment_status(order_id, "completed", payment_id)
+            
+            # Create subscription
+            await _create_paid_subscription(update, user_id, tariff_id, tariff, payment_id)
+        elif status == PAYMENT_STATUS_CANCELLED:
+            payment_storage.update_payment_status(order_id, "cancelled", payment_id)
+            await query.edit_message_text(
+                "❌ <b>Платеж отменен</b>\n\n"
+                "Вы можете попробовать снова."
+            )
+        else:
+            # Still pending
+            await query.answer("⏳ Платеж в обработке...")
+            await query.edit_message_text(
+                f"⏳ <b>Платеж в обработке</b>\n\n"
+                f"Статус: {status}\n\n"
+                f"Если вы уже оплатили, подождите несколько минут и проверьте снова.",
+                reply_markup=InlineKeyboardMarkup([
+                    [btn("🔄 Проверить снова", f"check_payment_{order_id}")],
+                    [back_btn("menu_tariffs")],
+                ])
+            )
     
     elif data.startswith("confirm_cancel_"):
         sub_id = data[15:]  # Remove "confirm_cancel_"
