@@ -67,7 +67,7 @@ install_new() {
     if [ -d "$INSTALL_DIR/.git" ]; then
         log_info "Репозиторий уже существует, обновляем..."
         cd "$INSTALL_DIR"
-        git pull origin master
+        git pull origin main
     else
         log_info "Клонирование репозитория..."
         git clone "$REPO_URL" "$INSTALL_DIR"
@@ -145,7 +145,7 @@ update_existing() {
     # Обновляем из репозитория
     if [ -d "$INSTALL_DIR/.git" ]; then
         log_info "Обновление из репозитория..."
-        git pull origin master
+        git pull origin main
     else
         log_warning "Не найден git репозиторий, пропускаем обновление кода"
     fi
