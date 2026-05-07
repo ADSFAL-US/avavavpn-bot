@@ -8,82 +8,49 @@ logger = logging.getLogger(__name__)
 
 
 # Tariff definitions
-# preset_id: links to X-Controller subscription preset (1 = lowest/free, 5 = highest)
+# preset_id: links to X-Controller subscription preset (1 = lowest/free, 3 = highest)
 TARIFFS = {
-    "youtube": {
-        "id": "youtube",
-        "name": "📺 Я хочу смотреть ютуб",
-        "description": "Бесплатный тестовый тариф\n• Скорость: 50 Мбит/с\n• Трафик: до 50 ГБ\n• Срок: 3 дня\n• Warp: нет\n• Whitelist: нет",
+    "trial": {
+        "id": "trial",
+        "name": "🧪 Пробник",
+        "description": "Бесплатный тестовый тариф\n• Скорость: 50 Мбит/с\n• Трафик: до 50 ГБ\n• Срок: 3 дня\n• Warp: нет\n• Доступ к тестовым конфигам: нет",
         "price": 0,
-        "currency": "рублей (единоразово)",
+        "currency": "бесплатно",
         "speed": "50 Мбит/с",
         "speed_upgrade": None,
         "traffic_limit_gb": 50,
         "duration_days": 3,
         "warp": False,
-        "whitelist": False,
-        "priority_support": False,
+        "test_configs": False,  # No access to test configs
         "preset_id": 1,  # Free/basic preset
     },
     "basic": {
         "id": "basic",
         "name": "🛡️ Базовый минимум",
-        "description": "Базовый тарифный план\n• Скорость: 20 Мбит/с (+1 Мбит за 1 руб, до 80 Мбит/с)\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: нет\n• Whitelist: нет",
+        "description": "Базовый тарифный план\n• Скорость: 50 Мбит/с\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: нет\n• Доступ к тестовым конфигам: да",
         "price": 99,
         "currency": "рублей в месяц",
-        "speed": "20 Мбит/с (+1 Мбит/руб до 80)",
-        "speed_upgrade": {"base": 20, "per_rub_mbps": 1, "max_mbps": 80},
+        "speed": "50 Мбит/с",
+        "speed_upgrade": None,  # No speed upgrades
         "traffic_limit_gb": None,
         "duration_days": 30,
         "warp": False,
-        "whitelist": False,
-        "priority_support": False,
+        "test_configs": True,  # Access to test configs
         "preset_id": 2,  # Basic preset
     },
     "premium": {
         "id": "premium",
         "name": "💎 Роскошный максимум",
-        "description": "Премиум тарифный план\n• Скорость: 50 Мбит/с (+1 Мбит за 80 коп., до 100 Мбит/с)\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: нет\n• Whitelist: да",
-        "price": 150,
+        "description": "Премиум тарифный план\n• Скорость: 100 Мбит/с\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: да\n• Доступ к тестовым конфигам: да",
+        "price": 199,
         "currency": "рублей в месяц",
-        "speed": "50 Мбит/с (+1 Мбит/0.80 руб до 100)",
-        "speed_upgrade": {"base": 50, "per_rub_mbps": None, "per_kop_mbps": 80, "max_mbps": 100},
+        "speed": "100 Мбит/с",
+        "speed_upgrade": None,  # No speed upgrades
         "traffic_limit_gb": None,
         "duration_days": 30,
-        "warp": False,
-        "whitelist": True,
-        "priority_support": False,
+        "warp": True,
+        "test_configs": True,  # Access to test configs
         "preset_id": 3,  # Premium preset
-    },
-    "extreme": {
-        "id": "extreme",
-        "name": "🔥 Я экстремист",
-        "description": "Экстремальный тарифный план\n• Скорость: 150 Мбит/с\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: да\n• Whitelist: да",
-        "price": 250,
-        "currency": "рублей в месяц",
-        "speed": "150 Мбит/с",
-        "speed_upgrade": None,
-        "traffic_limit_gb": None,
-        "duration_days": 30,
-        "warp": True,
-        "whitelist": True,
-        "priority_support": False,
-        "preset_id": 4,  # Extreme preset
-    },
-    "power": {
-        "id": "power",
-        "name": "⚡ Avava дай мне сил",
-        "description": "Максимальный тариф\n• Скорость: 500 Мбит/с\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: да\n• Whitelist: да\n• Приоритетная поддержка: да",
-        "price": 450,
-        "currency": "рублей в месяц",
-        "speed": "500 Мбит/с",
-        "speed_upgrade": None,
-        "traffic_limit_gb": None,
-        "duration_days": 30,
-        "warp": True,
-        "whitelist": True,
-        "priority_support": True,
-        "preset_id": 5,  # Power/maximum preset
     },
 }
 
@@ -134,8 +101,7 @@ class Database:
                 traffic_used_mb REAL DEFAULT 0,
                 traffic_limit_mb REAL,
                 warp_enabled INTEGER DEFAULT 0,
-                whitelist_enabled INTEGER DEFAULT 0,
-                priority_support INTEGER DEFAULT 0,
+                test_configs_enabled INTEGER DEFAULT 0,
                 panel_subscription_id INTEGER,
                 panel_sub_token TEXT,
                 payment_id TEXT,
@@ -155,6 +121,16 @@ class Database:
             logger.info("Migrated subscriptions table with panel fields")
         except Exception as e:
             logger.warning(f"Migration check error (may be already migrated): {e}")
+        
+        # Add test_configs_enabled column
+        try:
+            cursor.execute("SELECT test_configs_enabled FROM subscriptions LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE subscriptions ADD COLUMN test_configs_enabled INTEGER DEFAULT 0")
+            self.conn.commit()
+            logger.info("Migrated subscriptions table with test_configs_enabled field")
+        except Exception as e:
+            logger.warning(f"Migration check for test_configs_enabled failed (may be already migrated): {e}")
 
         # VPN connections table (for tracking active connections)
         cursor.execute("""
@@ -296,8 +272,7 @@ class Database:
         speed_mbps=None,
         traffic_limit_mb=None,
         warp_enabled=None,
-        whitelist_enabled=None,
-        priority_support=None,
+        test_configs_enabled=None,
         panel_subscription_id=None,
         panel_sub_token=None,
         payment_id=None,
@@ -319,26 +294,23 @@ class Database:
         
         if warp_enabled is None:
             warp_enabled = int(tariff["warp"])
-        if whitelist_enabled is None:
-            whitelist_enabled = int(tariff["whitelist"])
-        if priority_support is None:
-            priority_support = int(tariff["priority_support"])
+        if test_configs_enabled is None:
+            test_configs_enabled = int(tariff.get("test_configs", False))
         
         cursor = self.conn.cursor()
         cursor.execute(
             """INSERT INTO subscriptions 
                (user_id, tariff_id, status, ends_at, speed_mbps, 
-                traffic_limit_mb, warp_enabled, whitelist_enabled, priority_support,
+                traffic_limit_mb, warp_enabled, test_configs_enabled,
                 panel_subscription_id, panel_sub_token, payment_id)
-               VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user_id, tariff_id,
                 ends_at.isoformat() if ends_at else None,
                 speed_mbps,
                 traffic_limit_mb,
                 warp_enabled,
-                whitelist_enabled,
-                priority_support,
+                test_configs_enabled,
                 panel_subscription_id,
                 panel_sub_token,
                 payment_id,

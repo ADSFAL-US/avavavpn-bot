@@ -302,6 +302,7 @@ class SubscriptionManager:
         user_id: int,
         tariff_id: str,
         payment_id: Optional[str] = None,
+        preset_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Create complete subscription for user.
@@ -325,6 +326,7 @@ class SubscriptionManager:
             xc_result = self.xc.create_user_subscription(
                 telegram_user_id=user_id,
                 tariff=tariff,
+                preset_id=preset_id,  # Use provided preset_id
             )
             
             if not xc_result.get("success"):
@@ -347,8 +349,7 @@ class SubscriptionManager:
                 speed_mbps=self._extract_speed(tariff.get("speed", "0")),
                 traffic_limit_mb=tariff.get("traffic_limit_gb", 0) * 1024 if tariff.get("traffic_limit_gb") else None,
                 warp_enabled=tariff.get("warp", False),
-                whitelist_enabled=tariff.get("whitelist", False),
-                priority_support=tariff.get("priority_support", False),
+                test_configs_enabled=tariff.get("test_configs", False),
                 panel_subscription_id=sub_data.get("id"),
                 panel_sub_token=sub_data.get("sub_token"),
                 payment_id=payment_id,
@@ -404,6 +405,112 @@ class SubscriptionManager:
         except Exception as e:
             logger.error(f"Failed to cancel subscription: {e}")
             return False
+    
+    def change_subscription(
+        self,
+        subscription_id: int,
+        new_tariff_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Change subscription to a new tariff.
+        
+        This will:
+        1. Cancel old subscription in panel
+        2. Create new subscription with new tariff
+        3. Update existing DB record
+        4. Generate new subscription link
+        
+        Args:
+            subscription_id: Current subscription ID
+            new_tariff_id: New tariff ID
+            
+        Returns:
+            Dict with success status and new subscription data
+        """
+        from database import TARIFFS
+        
+        # Get current subscription
+        current_sub = self.db.get_subscription_by_id(subscription_id)
+        if not current_sub:
+            return {"success": False, "error": "Current subscription not found"}
+        
+        user_id = current_sub["user_id"]
+        new_tariff = TARIFFS.get(new_tariff_id)
+        if not new_tariff:
+            return {"success": False, "error": "Invalid tariff"}
+        
+        try:
+            # 1. Cancel old subscription in panel
+            old_panel_id = current_sub.get("panel_subscription_id")
+            if old_panel_id:
+                self.xc.delete_subscription(old_panel_id)
+                logger.info(f"Deleted old panel subscription: {old_panel_id}")
+            
+            # 2. Create new subscription in panel
+            xc_result = self.xc.create_user_subscription(
+                telegram_user_id=user_id,
+                tariff=new_tariff,
+                preset_id=new_tariff.get("preset_id"),  # Use preset_id from new tariff
+            )
+            
+            if not xc_result.get("success"):
+                error = xc_result.get("error", "Unknown error")
+                logger.error(f"Failed to create new subscription in panel: {error}")
+                return {"success": False, "error": f"Panel error: {error}"}
+            
+            new_sub_data = xc_result.get("subscription", {})
+            
+            # 3. Update existing DB record with new tariff and panel data
+            ends_at = None
+            if new_tariff.get("duration_days"):
+                from datetime import datetime, timedelta
+                ends_at = datetime.now() + timedelta(days=new_tariff["duration_days"])
+            
+            # Update the existing subscription record
+            self.db.conn.execute(
+                """UPDATE subscriptions SET 
+                   tariff_id = ?, ends_at = ?, speed_mbps = ?, 
+                   traffic_limit_mb = ?, warp_enabled = ?, test_configs_enabled = ?,
+                   panel_subscription_id = ?, panel_sub_token = ?
+                   WHERE id = ?""",
+                (
+                    new_tariff_id,
+                    ends_at.isoformat() if ends_at else None,
+                    self._extract_speed(new_tariff.get("speed", "0")),
+                    new_tariff.get("traffic_limit_gb", 0) * 1024 if new_tariff.get("traffic_limit_gb") else None,
+                    new_tariff.get("warp", False),
+                    new_tariff.get("test_configs", False),
+                    new_sub_data.get("id"),
+                    new_sub_data.get("sub_token"),
+                    subscription_id,
+                )
+            )
+            self.db.conn.commit()
+            
+            # 4. Generate new subscription link
+            sub_link = self.xc.get_subscription_link(new_sub_data.get("sub_token", ""))
+            
+            logger.info(
+                f"Subscription changed successfully: "
+                f"user={user_id}, old_tariff={current_sub['tariff_id']}, "
+                f"new_tariff={new_tariff_id}, new_panel_id={new_sub_data.get('id')}"
+            )
+            
+            return {
+                "success": True,
+                "subscription_id": subscription_id,
+                "panel_subscription_id": new_sub_data.get("id"),
+                "sub_token": new_sub_data.get("sub_token"),
+                "sub_link": sub_link,
+                "uuid": new_sub_data.get("uuid"),
+                "email": new_sub_data.get("email"),
+                "old_tariff": current_sub["tariff_id"],
+                "new_tariff": new_tariff_id,
+            }
+            
+        except Exception as e:
+            logger.exception(f"Failed to change subscription: {e}")
+            return {"success": False, "error": str(e)}
     
     def _extract_speed(self, speed_str: str) -> int:
         """Extract numeric speed from string like '50 Мбит/с'."""

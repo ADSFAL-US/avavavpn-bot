@@ -122,9 +122,6 @@ def build_main_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     ]
     
     if active_sub:
-        tariff = TARIFFS.get(active_sub["tariff_id"], {})
-        if tariff.get("speed_upgrade"):
-            keyboard.append([btn("⚡ Увеличить скорость", "menu_speed")])
         keyboard.append([btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")])
     
     keyboard.append([btn("🛠 Поддержка", "menu_support")])
@@ -170,9 +167,7 @@ def build_tariff_detail(tariff_id: str, user_id: int) -> tuple[str, InlineKeyboa
     # Perks with colors
     perks = []
     perks.append("✅ Warp" if tariff["warp"] else "❌ Warp")
-    perks.append("✅ Whitelist" if tariff["whitelist"] else "❌ Whitelist")
-    if tariff["priority_support"]:
-        perks.append("⭐ Приоритетная поддержка")
+    perks.append("✅ Тестовые конфиги" if tariff.get("test_configs", False) else "❌ Тестовые конфиги")
     
     # Current subscription note
     current = ""
@@ -199,8 +194,7 @@ def build_tariff_detail(tariff_id: str, user_id: int) -> tuple[str, InlineKeyboa
     else:
         keyboard.append([btn("💳 Выбрать тариф", f"subscribe_{tariff_id}")])
     
-    if tariff.get("speed_upgrade"):
-        keyboard.append([btn("📈 Рассчитать скорость", f"speed_calc_{tariff_id}")])
+    # No speed upgrades available
     
     keyboard.append([btn("🔙 К списку тарифов", "menu_tariffs")])
     
@@ -247,56 +241,22 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ <b>Скорость:</b> {active_sub.get('speed_mbps', 0)} Мбит/с\n"
         f"🔰 <b>Warp:</b> {'✅ Вкл' if active_sub.get('warp_enabled') else '❌ Выкл'}\n"
-        f"📝 <b>Whitelist:</b> {'✅ Вкл' if active_sub.get('whitelist_enabled') else '❌ Выкл'}\n"
-        f"⭐ <b>Поддержка:</b> {'Приоритет' if active_sub.get('priority_support') else 'Стандарт'}\n"
+        f"🧪 <b>Тестовые конфиги:</b> {'✅ Доступ' if active_sub.get('test_configs_enabled') else '❌ Нет доступа'}\n"
         f"⏱ <b>До:</b> {safe_date_format(active_sub.get('ends_at'))}"
         + traffic
     )
     
-    keyboard = [[btn("📋 Другие тарифы", "menu_tariffs")]]
-    
-    if tariff.get("speed_upgrade"):
-        keyboard.append([btn("⚡ Увеличить скорость", f"speed_calc_{active_sub['tariff_id']}")])
+    keyboard = [
+        [btn("📋 Другие тарифы", "menu_tariffs")],
+        [btn("🔄 Сменить тариф", f"change_tariff_{active_sub['id']}")]
+    ]
     
     keyboard.append([btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")])
     keyboard.append([back_btn()])
     
     return text, InlineKeyboardMarkup(keyboard)
 
-# ===== SPEED CALCULATOR =====
-def build_speed_calc(tariff_id: str) -> tuple[str, InlineKeyboardMarkup]:
-    """Build speed upgrade calculator."""
-    tariff = TARIFFS.get(tariff_id)
-    if not tariff or not tariff.get("speed_upgrade"):
-        return "❌ Нет опций апгрейда", InlineKeyboardMarkup([[back_btn(f"tariff_{tariff_id}")]])
-    
-    up = tariff["speed_upgrade"]
-    base = up["base"]
-    max_spd = up["max_mbps"]
-    
-    text = (
-        f"⚡ <b>Расчет скорости: {tariff['name']}</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Базовая: <b>{base}</b> Мбит/с\n"
-        f"Максимальная: <b>{max_spd}</b> Мбит/с\n\n"
-    )
-    
-    if up.get("per_rub_mbps"):
-        text += "💰 +1 Мбит/с = <b>1 ₽</b>\n\n"
-        text += "<b>Примеры:</b>\n"
-        text += f"• {base + 10} Мбит/с → +<b>10 ₽</b>\n"
-        text += f"• {base + 30} Мбит/с → +<b>30 ₽</b>\n"
-        text += f"• {max_spd} Мбит/с → +<b>{max_spd - base} ₽</b>\n"
-    elif up.get("per_kop_mbps"):
-        price = up["per_kop_mbps"] / 100
-        text += f"💰 +1 Мбит/с = <b>{price:.2f} ₽</b>\n\n"
-        text += "<b>Примеры:</b>\n"
-        text += f"• 60 Мбит/с → +<b>{10 * price:.0f} ₽</b>\n"
-        text += f"• 80 Мбит/с → +<b>{30 * price:.0f} ₽</b>\n"
-        text += f"• {max_spd} Мбит/с → +<b>{(max_spd - base) * price:.0f} ₽</b>\n"
-    
-    keyboard = [[btn("🔙 К тарифу", f"tariff_{tariff_id}")]]
-    return text, InlineKeyboardMarkup(keyboard)
+# Speed calculator removed - no longer supported
 
 # ===== ADMIN PANEL =====
 def build_admin_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -335,7 +295,7 @@ def build_admin_stats() -> tuple[str, InlineKeyboardMarkup]:
         "<b>По тарифам:</b>\n"
     )
     
-    icons = {"youtube": "📺", "basic": "🛡️", "premium": "💎", "extreme": "🔥", "power": "⚡"}
+    icons = {"trial": "🧪", "basic": "🛡️", "premium": "💎"}
     
     for tid, stat in stats.items():
         icon = icons.get(tid, "📦")
@@ -507,7 +467,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
 
 async def _handle_free_subscription(update: Update, user_id: int, tariff_id: str, tariff: dict):
-    """Handle free subscription (youtube tariff) creation."""
+    """Handle free subscription (trial tariff) creation."""
     query = update.callback_query
     
     # Cancel existing subscription
@@ -520,6 +480,7 @@ async def _handle_free_subscription(update: Update, user_id: int, tariff_id: str
         result = subscription_manager.create_subscription(
             user_id=user_id,
             tariff_id=tariff_id,
+            preset_id=tariff.get("preset_id"),  # Use preset_id from tariff
         )
         
         if not result.get("success"):
@@ -567,6 +528,7 @@ async def _create_paid_subscription(update: Update, user_id: int, tariff_id: str
             user_id=user_id,
             tariff_id=tariff_id,
             payment_id=payment_id,
+            preset_id=tariff.get("preset_id"),  # Use preset_id from tariff
         )
         
         if not result.get("success"):
@@ -606,6 +568,50 @@ async def _create_paid_subscription(update: Update, user_id: int, tariff_id: str
         )
 
 
+async def _handle_tariff_change(update: Update, user_id: int, sub_id: int, new_tariff_id: str, new_tariff: dict):
+    """Handle tariff change after payment confirmation."""
+    query = update.callback_query
+    
+    try:
+        # Use SubscriptionManager to change tariff
+        if not subscription_manager:
+            await query.edit_message_text("❌ Сервис подписок недоступен")
+            return
+        
+        result = subscription_manager.change_subscription(sub_id, new_tariff_id)
+        
+        if not result.get("success"):
+            error = result.get("error", "Unknown error")
+            logger.error(f"Tariff change failed: {error}")
+            await query.edit_message_text(
+                f"❌ <b>Ошибка смены тарифа</b>\n\n{error}"
+            )
+            return
+        
+        sub_link = result.get("sub_link", "N/A")
+        old_tariff_name = TARIFFS.get(result.get("old_tariff", ""), {}).get("name", "предыдущий")
+        
+        text = (
+            f"✅ <b>Тариф изменен!</b>\n\n"
+            f"🔄 С {old_tariff_name} на {new_tariff['name']}\n"
+            f"⚡ {new_tariff['speed']}\n"
+            f"⏱ {new_tariff['duration_days']} дней\n\n"
+            f"🔗 <b>Ваша новая ссылка:</b>\n"
+            f"<code>{sub_link}</code>\n\n"
+            f"Скопируйте ссылку и импортируйте в приложение VPN."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 Инструкция по настройке", url=sub_link)],
+            [btn("📊 Моя подписка", "menu_subscription"), back_btn()]
+        ]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    except Exception as e:
+        logger.exception(f"Error changing tariff: {e}")
+        await query.edit_message_text(f"❌ <b>Ошибка:</b> {str(e)}")
+
+
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Main callback query router."""
     query = update.callback_query
@@ -632,14 +638,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, markup = build_subscription_view(user_id)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
     
-    elif data == "menu_speed":
-        active_sub = db.get_active_subscription(user_id)
-        if active_sub:
-            text, markup = build_speed_calc(active_sub["tariff_id"])
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
-        else:
-            text, markup = build_main_menu(user_id)
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    # Speed upgrades removed
     
     elif data == "menu_support":
         text = (
@@ -656,10 +655,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text, markup = build_tariff_detail(tariff_id, user_id)
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
     
-    elif data.startswith("speed_calc_"):
-        tariff_id = data[11:]  # Remove "speed_calc_"
-        text, markup = build_speed_calc(tariff_id)
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    # Speed calculator removed
     
     elif data.startswith("subscribe_"):
         tariff_id = data[10:]  # Remove "subscribe_"
@@ -823,11 +819,193 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     
+    elif data.startswith("change_tariff_"):
+        sub_id = data[14:]  # Remove "change_tariff_"
+        try:
+            sid = int(sub_id)
+            # Show available tariffs for change
+            active_sub = db.get_subscription_by_id(sid)
+            if not active_sub or active_sub["user_id"] != user_id:
+                await query.edit_message_text("❌ Подписка не найдена")
+                return
+            
+            current_tariff_id = active_sub["tariff_id"]
+            text = "🔄 <b>Выберите новый тариф:</b>\n\n"
+            keyboard = []
+            
+            for tid, tariff in TARIFFS.items():
+                if tid != current_tariff_id:  # Don't show current tariff
+                    price = "Бесплатно" if tariff["price"] == 0 else f"{tariff['price']}₽"
+                    keyboard.append([btn(f"{tariff['name']} — {price}", f"confirm_change_{sid}_{tid}")])
+            
+            keyboard.append([btn("❌ Отмена", "menu_subscription")])
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+        except ValueError:
+            await query.edit_message_text("❌ Ошибка ID подписки")
+    
+    elif data.startswith("confirm_change_"):
+        parts = data[15:].split("_")  # Remove "confirm_change_" and split
+        if len(parts) != 2:
+            await query.edit_message_text("❌ Ошибка данных")
+            return
+        
+        sub_id = int(parts[0])
+        new_tariff_id = parts[1]
+        new_tariff = TARIFFS.get(new_tariff_id)
+        
+        if not new_tariff:
+            await query.edit_message_text("❌ Тариф не найден")
+            return
+        
+        # Check if paid tariff
+        if new_tariff["price"] > 0:
+            # Show payment options
+            text = (
+                f"🔄 <b>Смена тарифа</b>\n\n"
+                f"С {TARIFFS.get(db.get_subscription_by_id(sub_id)['tariff_id'], {}).get('name', 'текущего')} "
+                f"на {new_tariff['name']}\n\n"
+                f"💰 Стоимость: <b>{new_tariff['price']} {new_tariff['currency']}</b>\n\n"
+                "Нажмите «Оплатить смену» для продолжения."
+            )
+            keyboard = [
+                [btn("💳 Оплатить смену", f"pay_change_{sub_id}_{new_tariff_id}")],
+                [btn("❌ Отмена", "menu_subscription")]
+            ]
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            # Free tariff - change immediately
+            await _handle_tariff_change(update, user_id, sub_id, new_tariff_id, new_tariff)
+    
+    elif data.startswith("pay_change_"):
+        parts = data[11:].split("_")  # Remove "pay_change_" and split
+        if len(parts) != 2:
+            await query.edit_message_text("❌ Ошибка данных")
+            return
+        
+        sub_id = int(parts[0])
+        new_tariff_id = parts[1]
+        new_tariff = TARIFFS.get(new_tariff_id)
+        
+        if not new_tariff:
+            await query.edit_message_text("❌ Тариф не найден")
+            return
+        
+        # Create payment for tariff change
+        order_id = f"change_{user_id}_{sub_id}_{new_tariff_id}"
+        
+        payment_result = yookassa.create_payment(
+            amount=new_tariff["price"],
+            description=f"Смена тарифа на {new_tariff['name']}",
+            user_id=user_id,
+            tariff_id=new_tariff_id,
+            order_id=order_id,
+        )
+        
+        if not payment_result.get("success"):
+            error_msg = payment_result.get("error", "Unknown error")
+            await query.edit_message_text(
+                f"❌ <b>Ошибка создания платежа</b>\n\n{error_msg}"
+            )
+            return
+        
+        # Store payment
+        payment_storage.create_payment_record(
+            order_id=order_id,
+            user_id=user_id,
+            tariff_id=new_tariff_id,
+            amount=new_tariff["price"],
+            payment_id=payment_result.get("payment_id"),
+        )
+        
+        # Show payment link
+        payment_url = payment_result.get("payment_url")
+        text = (
+            f"💳 <b>Оплата смены тарифа</b>\n\n"
+            f"📌 {new_tariff['name']}\n"
+            f"💰 Сумма: {new_tariff['price']} руб.\n\n"
+            f"Нажмите кнопку ниже для оплаты."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("💳 Перейти к оплате", url=payment_url)],
+            [btn("🔄 Проверить оплату", f"check_change_payment_{order_id}")],
+            [btn("❌ Отмена", "menu_subscription")],
+        ]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data.startswith("check_change_payment_"):
+        order_id = data[20:]  # Remove "check_change_payment_"
+        
+        # Get payment from database
+        payment_record = payment_storage.get_payment_by_order(order_id)
+        if not payment_record:
+            await query.edit_message_text("❌ Платеж не найден")
+            return
+        
+        # Check if already processed
+        if payment_record.get("status") == "completed":
+            await query.edit_message_text(
+                "✅ <b>Платеж уже обработан</b>\n\n"
+                "Тариф изменен."
+            )
+            return
+        
+        # Check payment status with YooKassa
+        payment_id = payment_record.get("payment_id")
+        if not payment_id:
+            await query.edit_message_text("❌ Ошибка: ID платежа не найден")
+            return
+        
+        check_result = yookassa.check_payment(payment_id)
+        
+        if check_result.get("error"):
+            await query.edit_message_text(
+                f"❌ <b>Ошибка проверки</b>\n\n{check_result['error']}"
+            )
+            return
+        
+        status = check_result.get("status")
+        paid = check_result.get("paid", False)
+        
+        if status == PAYMENT_STATUS_SUCCEEDED and paid:
+            # Payment successful - extract subscription and new tariff from order_id
+            parts = order_id.split("_")
+            if len(parts) >= 4:
+                sub_id = int(parts[2])
+                new_tariff_id = parts[3]
+                new_tariff = TARIFFS.get(new_tariff_id)
+                
+                if new_tariff:
+                    # Update payment status
+                    payment_storage.update_payment_status(order_id, "completed", payment_id)
+                    
+                    # Change tariff
+                    await _handle_tariff_change(update, user_id, sub_id, new_tariff_id, new_tariff)
+                else:
+                    await query.edit_message_text("❌ Тариф не найден")
+            else:
+                await query.edit_message_text("❌ Ошибка данных заказа")
+        elif status == PAYMENT_STATUS_CANCELLED:
+            payment_storage.update_payment_status(order_id, "cancelled", payment_id)
+            await query.edit_message_text(
+                "❌ <b>Платеж отменен</b>\n\n"
+                "Вы можете попробовать снова."
+            )
+        else:
+            # Still pending
+            await query.answer("⏳ Платеж в обработке...")
+    
     elif data.startswith("cancel_"):
         sub_id = data[7:]  # Remove "cancel_"
         try:
             sid = int(sub_id)
-            success = db.cancel_subscription(sid, user_id)
+            # Use SubscriptionManager to cancel from both panel and DB
+            if subscription_manager:
+                success = subscription_manager.cancel_subscription(sid)
+            else:
+                success = db.cancel_subscription(sid, user_id)
+            
             if success:
                 text = "✅ Подписка отменена"
             else:
