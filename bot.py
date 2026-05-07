@@ -470,11 +470,6 @@ async def _handle_free_subscription(update: Update, user_id: int, tariff_id: str
     """Handle free subscription (trial tariff) creation."""
     query = update.callback_query
     
-    # Cancel existing subscription
-    active_sub = db.get_active_subscription(user_id)
-    if active_sub:
-        db.cancel_subscription(active_sub["id"], user_id)
-    
     try:
         # Create subscription via SubscriptionManager
         result = subscription_manager.create_subscription(
@@ -516,11 +511,6 @@ async def _handle_free_subscription(update: Update, user_id: int, tariff_id: str
 async def _create_paid_subscription(update: Update, user_id: int, tariff_id: str, tariff: dict, payment_id: str):
     """Create subscription after successful payment."""
     query = update.callback_query
-    
-    # Cancel existing subscription
-    active_sub = db.get_active_subscription(user_id)
-    if active_sub:
-        db.cancel_subscription(active_sub["id"], user_id)
     
     try:
         # Create subscription via SubscriptionManager
@@ -663,6 +653,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not tariff:
             await query.edit_message_text("❌ Тариф не найден")
+            return
+        
+        # Check if user already has active subscription
+        active_sub = db.get_active_subscription(user_id)
+        if active_sub:
+            active_tariff = TARIFFS.get(active_sub["tariff_id"], {})
+            await query.edit_message_text(
+                f"❌ <b>У вас уже есть активная подписка</b>\n\n"
+                f"📌 Текущий тариф: {active_tariff.get('name', 'Неизвестный')}\n"
+                f"⏱ Действует до: {safe_date_format(active_sub.get('ends_at'))}\n\n"
+                f"Для смены тарифа отмените текущую подписку в меню «Моя подписка»."
+            )
             return
         
         # Check if X-Controller is configured
