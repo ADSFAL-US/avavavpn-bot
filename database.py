@@ -247,11 +247,12 @@ class Database:
         username = user_data.get("username", "")
         last_name = user_data.get("last_name", "")
         referral_code = f"REF_{user_id}_{uuid.uuid4().hex[:6]}"
+        referred_by = user_data.get("referred_by")
         
         cursor.execute(
-            """INSERT INTO users (user_id, username, first_name, last_name, referral_code)
-               VALUES (?, ?, ?, ?, ?)""",
-            (user_id, username, first_name, last_name, referral_code)
+            """INSERT INTO users (user_id, username, first_name, last_name, referral_code, referred_by)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (user_id, username, first_name, last_name, referral_code, referred_by)
         )
         self.conn.commit()
         
@@ -268,7 +269,7 @@ class Database:
             "ban_expires": None,
             "referral_code": referral_code,
             "referral_days": 0,
-            "referred_by": None,
+            "referred_by": referred_by,
             "has_used_discount": False,
             "has_rewarded_referrer": False
         }

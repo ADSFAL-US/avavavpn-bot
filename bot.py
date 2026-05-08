@@ -675,7 +675,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "menu_referral":
         text, markup = build_referral_menu(user_id)
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+        try:
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+        except Exception as e:
+            # If message content hasn't changed, just answer the callback
+            if "not modified" in str(e):
+                await query.answer("📊 Данные актуальны")
+            else:
+                raise
     
     # ===== TARIFFS =====
     elif data.startswith("tariff_"):
@@ -741,7 +748,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Apply 10% discount for new referred users (only for paid tariffs)
         discount = 0
         user_info = db.get_user_by_id(user_id)
-        if user_info.get("referred_by") and not user_info.get("has_used_discount") and tariff_id not in ["trial", "basic", "premium"]:
+        if user_info.get("referred_by") and not user_info.get("has_used_discount") and tariff_id not in ["trial"]:
             discount = amount * 0.1
             amount -= discount
             
@@ -861,10 +868,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         (user_id,)
                     )
                     db.conn.commit()
-                
-                # Mark discount as used
-                if discount > 0:
-                    db.set_discount_used(user_id)
+                    
+                    # Mark discount as used if discount was applied
+                    if user_info.get("referred_by") and not user_info.get("has_used_discount") and tariff_id not in ["trial"]:
+                        db.set_discount_used(user_id)
             
             # If extending, cancel old subscription
             if order_id.startswith("extend_"):
