@@ -138,40 +138,52 @@ class Database:
         except Exception as e:
             logger.warning(f"Migration check for test_configs_enabled failed (may be already migrated): {e}")
 
-        # Add referral_code column and generate codes for existing users
-        try:
-            cursor.execute("SELECT referral_code FROM users LIMIT 1")
-        except sqlite3.OperationalError:
-            # First add column without UNIQUE constraint
-            cursor.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
-            self.conn.commit()
-            logger.info("Added referral_code column to users table")
-            
-            # Generate referral codes for existing users
-            cursor.execute("SELECT user_id FROM users WHERE referral_code IS NULL")
-            users_without_code = cursor.fetchall()
-            
-            for user_row in users_without_code:
-                user_id = user_row["user_id"]
-                referral_code = f"REF_{user_id}_{uuid.uuid4().hex[:6]}"
-                cursor.execute(
-                    "UPDATE users SET referral_code = ? WHERE user_id = ?",
-                    (referral_code, user_id)
-                )
-            
+        # Add missing columns for referral system
+        missing_columns = [
+            ("referral_code", "TEXT"),
+            ("referral_days", "REAL DEFAULT 0"),
+            ("referred_by", "INTEGER"),
+            ("has_used_discount", "BOOLEAN DEFAULT 0"),
+            ("has_rewarded_referrer", "BOOLEAN DEFAULT 0")
+        ]
+        
+        for column_name, column_def in missing_columns:
+            try:
+                cursor.execute(f"SELECT {column_name} FROM users LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {column_name} {column_def}")
+                self.conn.commit()
+                logger.info(f"Added {column_name} column to users table")
+        
+        # Generate referral codes for existing users
+        cursor.execute("SELECT user_id FROM users WHERE referral_code IS NULL")
+        users_without_code = cursor.fetchall()
+        
+        for user_row in users_without_code:
+            user_id = user_row["user_id"]
+            referral_code = f"REF_{user_id}_{uuid.uuid4().hex[:6]}"
+            cursor.execute(
+                "UPDATE users SET referral_code = ? WHERE user_id = ?",
+                (referral_code, user_id)
+            )
+        
+        if users_without_code:
             self.conn.commit()
             logger.info(f"Generated referral codes for {len(users_without_code)} existing users")
-            
-            # Create unique index to enforce uniqueness
-            try:
-                cursor.execute("CREATE UNIQUE INDEX idx_users_referral_code ON users(referral_code)")
-                self.conn.commit()
-                logger.info("Created unique index for referral_code")
-            except sqlite3.OperationalError as e:
-                logger.warning(f"Could not create unique index for referral_code: {e}")
-                
-        except Exception as e:
-            logger.warning(f"Migration check for referral_code failed (may be already migrated): {e}")
+        
+        # Set default values for missing fields
+        cursor.execute("UPDATE users SET referral_days = 0 WHERE referral_days IS NULL")
+        cursor.execute("UPDATE users SET has_used_discount = 0 WHERE has_used_discount IS NULL")
+        cursor.execute("UPDATE users SET has_rewarded_referrer = 0 WHERE has_rewarded_referrer IS NULL")
+        self.conn.commit()
+        
+        # Create unique index for referral_code if not exists
+        try:
+            cursor.execute("CREATE UNIQUE INDEX idx_users_referral_code ON users(referral_code)")
+            self.conn.commit()
+            logger.info("Created unique index for referral_code")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not create unique index for referral_code: {e}")
 
         # VPN connections table (for tracking active connections)
         cursor.execute("""
