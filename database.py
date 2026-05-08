@@ -142,7 +142,8 @@ class Database:
         try:
             cursor.execute("SELECT referral_code FROM users LIMIT 1")
         except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE users ADD COLUMN referral_code TEXT UNIQUE")
+            # First add column without UNIQUE constraint
+            cursor.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
             self.conn.commit()
             logger.info("Added referral_code column to users table")
             
@@ -160,6 +161,15 @@ class Database:
             
             self.conn.commit()
             logger.info(f"Generated referral codes for {len(users_without_code)} existing users")
+            
+            # Create unique index to enforce uniqueness
+            try:
+                cursor.execute("CREATE UNIQUE INDEX idx_users_referral_code ON users(referral_code)")
+                self.conn.commit()
+                logger.info("Created unique index for referral_code")
+            except sqlite3.OperationalError as e:
+                logger.warning(f"Could not create unique index for referral_code: {e}")
+                
         except Exception as e:
             logger.warning(f"Migration check for referral_code failed (may be already migrated): {e}")
 
