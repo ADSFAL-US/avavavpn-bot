@@ -457,6 +457,16 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    def has_user_ever_had_tariff(self, user_id: int, tariff_id: str) -> bool:
+        """Check if user has ever had a specific tariff."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) as count FROM subscriptions WHERE user_id = ? AND tariff_id = ?",
+            (user_id, tariff_id)
+        )
+        row = cursor.fetchone()
+        return row["count"] > 0 if row else False
+        
     def get_subscription_stats(self):
         """Get subscription statistics."""
         cursor = self.conn.cursor()

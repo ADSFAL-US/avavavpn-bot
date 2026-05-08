@@ -664,6 +664,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Для смены тарифа отмените текущую подписку в меню «Моя подписка»."
             )
             return
+            
+        # For trial tariff, check if user has ever had a trial before
+        if tariff_id == "trial":
+            if db.has_user_ever_had_tariff(user_id, "trial"):
+                await query.edit_message_text(
+                    "❌ <b>Пробный тариф можно активировать только один раз</b>\n\n"
+                    "Вы уже использовали пробный период ранее."
+                )
+                return
         
         # Check if X-Controller is configured
         if not subscription_manager:
