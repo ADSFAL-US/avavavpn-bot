@@ -247,13 +247,11 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     )
     
     keyboard = [
-        [btn("📋 Другие тарифы", "menu_tariffs")],
-        [btn("🔄 Сменить тариф", f"change_tariff_{active_sub['id']}")]
+        [btn("📋 Другие тарифы", "menu_tariffs"), btn("🔄 Сменить тариф", f"change_tariff_{active_sub['id']}")],
+        [btn("🔁 Продлить", f"extend_{active_sub['id']}"), btn("🔗 Получить ссылку", f"get_link_{active_sub['id']}")],
+        [btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")],
+        [back_btn()],
     ]
-    
-    keyboard.append([btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")])
-    keyboard.append([back_btn()])
-    
     return text, InlineKeyboardMarkup(keyboard)
 
 # Speed calculator removed - no longer supported
@@ -790,6 +788,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Create subscription
             await _create_paid_subscription(update, user_id, tariff_id, tariff, payment_id)
+            
+            # If extending, cancel old subscription
+            if order_id.startswith("extend_"):
+                try:
+                    old_sub_id = int(order_id.split("_")[1])
+                    if subscription_manager.cancel_subscription(old_sub_id):
+                        logger.info(f"Extended: canceled old subscription {old_sub_id}")
+                    else:
+                        logger.error(f"Failed to cancel old subscription {old_sub_id} for extension")
+                except (IndexError, ValueError) as e:
+                    logger.error(f"Error parsing old_sub_id from order_id {order_id}: {e}")
+                    
         elif status == PAYMENT_STATUS_CANCELLED:
             payment_storage.update_payment_status(order_id, "cancelled", payment_id)
             await query.edit_message_text(
@@ -998,6 +1008,113 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Still pending
             await query.answer("⏳ Платеж в обработке...")
     
+    elif data.startswith("get_link_"):
+        sub_id = data[9:]  # Remove "get_link_"
+        try:
+            sid = int(sub_id)
+            active_sub = db.get_subscription_by_id(sid)
+            if not active_sub or active_sub["user_id"] != user_id:
+                await query.edit_message_text("❌ Подписка не найдена")
+                return
+                
+            link = subscription_manager.get_user_subscription_link(user_id)
+            if link:
+                text = (
+                    "🔗 <b>Ваша ссылка для подключения</b>\n\n"
+                    f"<code>{link}</code>\n\n"
+                    "Скопируйте ссылку и импортируйте в приложение VPN."
+                )
+                keyboard = [[btn("📊 Моя подписка", "menu_subscription"), back_btn()]]
+                await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                await query.edit_message_text("❌ Ссылка не найдена. Возможно, подписка неактивна.")
+        except ValueError:
+            await query.edit_message_text("❌ Ошибка ID подписки")
+            
+    elif data.startswith("extend_"):
+        sub_id = data[7:]  # Remove "extend_"
+        try:
+            sid = int(sub_id)
+            active_sub = db.get_subscription_by_id(sid)
+            if not active_sub or active_sub["user_id"] != user_id:
+                await query.edit_message_text("❌ Подписка не найдена")
+                return
+                
+            tariff_id = active_sub["tariff_id"]
+            tariff = TARIFFS.get(tariff_id)
+            if not tariff:
+                await query.edit_message_text("❌ Тариф не найден")
+                return
+                
+            # Check if free tariff - cannot extend free
+            if tariff.get("price", 0) == 0:
+                await query.edit_message_text("❌ Бесплатный тариф нельзя продлить")
+                return
+                
+            # Check if X-Controller is configured
+            if not subscription_manager:
+                await query.edit_message_text("❌ Сервис подписок недоступен")
+                return
+                
+            # Check if YooKassa is available
+            if not yookassa:
+                await query.edit_message_text("❌ Платежная система недоступна")
+                return
+                
+            # Create order_id with prefix "extend_"
+            order_id = f"extend_{sid}_{uuid.uuid4().hex[:8]}"
+            amount = tariff.get("price", 0)
+            
+            # Create payment
+            payment_result = yookassa.create_payment(
+                amount=amount,
+                description=f"Avava VPN - Продление {tariff['name']}",
+                user_id=user_id,
+                tariff_id=tariff_id,
+                order_id=order_id,
+            )
+            
+            if not payment_result.get("success"):
+                error_msg = payment_result.get("error", "Unknown error")
+                logger.error(f"Payment creation failed: {error_msg}")
+                await query.edit_message_text(
+                    f"❌ <b>Ошибка создания платежа</b>\n\n{error_msg}"
+                )
+                return
+                
+            # Store payment
+            payment_storage.create_payment_record(
+                order_id=order_id,
+                user_id=user_id,
+                tariff_id=tariff_id,
+                amount=amount,
+                payment_id=payment_result.get("payment_id"),
+            )
+            
+            # Show payment link
+            payment_url = payment_result.get("payment_url")
+            text = (
+                f"💳 <b>Продление тарифа</b>\n\n"
+                f"📌 {tariff['name']}\n"
+                f"💰 Сумма: {amount} руб.\n\n"
+                f"Нажмите кнопку ниже для оплаты.\n"
+                f"После оплаты нажмите «Проверить оплату»."
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("💳 Перейти к оплате", url=payment_url)],
+                [btn("🔄 Проверить оплату", f"check_payment_{order_id}")],
+                [back_btn("menu_subscription")],
+            ]
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+            # Store state for payment check
+            context.user_data["pending_order_id"] = order_id
+            context.user_data["state"] = STATE_PAYMENT_PENDING
+            
+        except ValueError:
+            await query.edit_message_text("❌ Ошибка ID подписки")
+            
     elif data.startswith("cancel_"):
         sub_id = data[7:]  # Remove "cancel_"
         try:

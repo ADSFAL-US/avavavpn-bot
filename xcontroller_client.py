@@ -400,7 +400,7 @@ class SubscriptionManager:
             if panel_id:
                 self.xc.delete_subscription(panel_id)
             
-            self.db.cancel_subscription(subscription_id)
+            self.db.cancel_subscription(subscription_id, sub['user_id'])
             return True
         except Exception as e:
             logger.error(f"Failed to cancel subscription: {e}")
