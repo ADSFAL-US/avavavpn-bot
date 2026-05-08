@@ -4,6 +4,9 @@ import os
 # Telegram Bot Token (get from @BotFather on Telegram)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
+# Bot Username (without @)
+BOT_USERNAME = os.getenv("BOT_USERNAME", "avavavpn_bot")
+
 # Admin User IDs (Telegram user IDs, comma-separated)
 ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "0").split(",")]
 

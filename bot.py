@@ -206,7 +206,7 @@ def build_tariff_detail(tariff_id: str, user_id: int) -> tuple[str, InlineKeyboa
         f"💰 {price}\n"
         + "\n".join(features) + "\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"<b>Включено:</b>\n" + "\n".join(perks)
+        "<b>Включено:</b>\n" + "\n".join(perks)
         + current
     )
     
