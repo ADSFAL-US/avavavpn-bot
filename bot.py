@@ -673,6 +673,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[back_btn()]]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     
+    elif data == "menu_referral":
+        text, markup = build_referral_menu(user_id)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    
     # ===== TARIFFS =====
     elif data.startswith("tariff_"):
         tariff_id = data[7:]  # Remove "tariff_"
