@@ -69,6 +69,7 @@ STATE_IDLE = "idle"
 STATE_FIND_USER = "find_user"
 STATE_BAN_REASON = "ban_reason"
 STATE_PAYMENT_PENDING = "payment_pending"
+STATE_SIMULATE_REFERRAL_USERID = "simulate_ref_userid"
 
 def is_admin(user_id: int) -> bool:
     """Check if user is admin."""
@@ -298,6 +299,7 @@ def build_admin_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         [btn("📊 Статистика", "admin_stats"), btn("👥 Пользователи", "admin_users")],
         [btn("📋 Подписки", "admin_subscriptions"), btn("🔍 Найти", "admin_find")],
         [btn("📝 Логи", "admin_logs")],
+        [btn("🧪 Симуляция реферала", "admin_simulate_referral")],
         [btn("🔙 В меню", "main_menu")],
     ]
     
@@ -495,6 +497,87 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=InlineKeyboardMarkup([[back_btn("admin_panel")]])
         )
     
+    elif state == STATE_SIMULATE_REFERRAL_USERID:
+        try:
+            test_user_id = int(text)
+        except ValueError:
+            await update.message.reply_text("❌ Введите числовой ID пользователя")
+            return
+
+        context.user_data["state"] = STATE_IDLE
+        admin_id = update.effective_user.id
+
+        if not is_admin(admin_id):
+            await update.message.reply_text("❌ Нет доступа")
+            return
+
+        # 1. Получаем или создаём тестового пользователя
+        test_user = db.get_or_create_user({"user_id": test_user_id, "first_name": "TestUser", "username": ""})
+        # Принудительно устанавливаем referred_by (если ещё не заполнен)
+        if not test_user.get("referred_by") or test_user["referred_by"] != admin_id:
+            cursor = db.conn.cursor()
+            cursor.execute("UPDATE users SET referred_by = ? WHERE user_id = ?", (admin_id, test_user_id))
+            # Сбрасываем флаги для чистоты эксперимента
+            cursor.execute("UPDATE users SET has_rewarded_referrer = 0, has_used_discount = 0 WHERE user_id = ?", (test_user_id,))
+            db.conn.commit()
+            # Обновляем данные в переменной
+            test_user = db.get_user_by_id(test_user_id)
+
+        # 2. Проверяем, есть ли у админа реферальный код, и если нет — генерируем
+        admin_user = db.get_user_by_id(admin_id)
+        if not admin_user.get("referral_code"):
+            referral_code = f"REF_{admin_id}_{uuid.uuid4().hex[:6]}"
+            cursor = db.conn.cursor()
+            cursor.execute("UPDATE users SET referral_code = ? WHERE user_id = ?", (referral_code, admin_id))
+            db.conn.commit()
+
+        # 3. Проверяем, не использовал ли тестовый пользователь пробный период
+        if db.has_user_ever_had_tariff(test_user_id, "trial"):
+            # Отменяем старый trial, чтобы можно было симулировать заново
+            db.cancel_subscription_by_tariff("trial")
+            logger.info(f"Old trial cancelled for user {test_user_id} to allow simulation")
+
+        # 4. Берём тариф trial
+        tariff = TARIFFS.get("trial")
+        if not tariff or not subscription_manager:
+            await update.message.reply_text("❌ Нет тарифа trial или не настроен X-Controller")
+            return
+
+        # 5. Создаём подписку trial через менеджер
+        result = subscription_manager.create_subscription(
+            user_id=test_user_id,
+            tariff_id="trial",
+            preset_id=tariff.get("preset_id"),
+        )
+
+        if not result.get("success"):
+            error = result.get("error", "Неизвестная ошибка")
+            await update.message.reply_text(f"❌ Ошибка создания подписки: {error}")
+            return
+
+        sub_link = result.get("sub_link", "N/A")
+
+        # 6. Начисляем бонус рефереру (та же логика, что должна быть в _handle_free_subscription)
+        test_user_after = db.get_user_by_id(test_user_id)
+        if test_user_after.get("referred_by") and not test_user_after.get("has_rewarded_referrer"):
+            referrer_id = test_user_after["referred_by"]
+            if referrer_id != test_user_id:  # защита от self-referral
+                db.add_referral_days(referrer_id, 7)
+                cursor = db.conn.cursor()
+                cursor.execute("UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?", (test_user_id,))
+                db.conn.commit()
+                logger.info(f"Симуляция: реферер {referrer_id} получил 7 дней за trial пользователя {test_user_id}")
+
+        # 7. Ответ админу
+        await update.message.reply_text(
+            f"✅ <b>Симуляция успешна!</b>\n\n"
+            f"Пользователь <code>{test_user_id}</code> активировал пробный период.\n"
+            f"Подписка создана, ссылка: <code>{sub_link}</code>\n\n"
+            f"Реферер (вы) получили <b>7 реферальных дней</b>.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[btn("👑 Админ-панель", "admin_panel")]])
+        )
+    
     else:
         # Default - show menu
         text, reply_markup = build_main_menu(update.effective_user.id)
@@ -521,6 +604,17 @@ async def _handle_free_subscription(update: Update, user_id: int, tariff_id: str
             return
         
         sub_link = result.get("sub_link", "N/A")
+        
+        # Начисление реферальных дней за пробный тариф
+        user_info = db.get_user_by_id(user_id)
+        if user_info.get("referred_by") and not user_info.get("has_rewarded_referrer"):
+            if user_info["referred_by"] != user_id:
+                db.add_referral_days(user_info["referred_by"], 7)
+                cursor = db.conn.cursor()
+                cursor.execute("UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?", (user_id,))
+                db.conn.commit()
+                logger.info(f"Referral reward: user {user_info['referred_by']} got 7 days for trial of {user_id}")
+        
         text = (
             f"✅ <b>Подписка активирована!</b>\n\n"
             f"📌 {tariff['name']}\n"
@@ -1315,6 +1409,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text, markup = build_admin_logs()
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    
+    elif data == "admin_simulate_referral":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        context.user_data["state"] = STATE_SIMULATE_REFERRAL_USERID
+        text = (
+            "🧪 <b>Симуляция реферала</b>\n\n"
+            "Введите числовой Telegram ID <b>тестового пользователя</b>, "
+            "который будет «приглашён» вами."
+        )
+        keyboard = [[back_btn("admin_panel")]]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data == "admin_find":
         if not is_admin(user_id):
