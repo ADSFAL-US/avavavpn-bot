@@ -1,6 +1,7 @@
 # Avava VPN Bot - Redesigned UI (Single Message Interface)
 import logging
 import uuid
+from datetime import datetime, timedelta
 
 from telegram import (
     Update,
@@ -124,12 +125,34 @@ def build_main_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     if active_sub:
         keyboard.append([btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")])
     
-    keyboard.append([btn("🛠 Поддержка", "menu_support")])
+    keyboard.append([btn("👥 Реферальная система", "menu_referral"), btn(" Поддержка", "menu_support")])
     
     if is_admin(user_id):
         keyboard.append([btn("👑 Админ-панель", "admin_panel")])
     
     return text, InlineKeyboardMarkup(keyboard)
+
+# ===== REFERRAL MENU =====
+def build_referral_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Build referral menu."""
+    user = db.get_user_by_id(user_id)
+    if not user:
+        return "Ошибка", InlineKeyboardMarkup([[back_btn()]])
+    
+    text = (
+        "👥 <b>Реферальная система</b>\n\n"
+        f"Ваша реферальная ссылка:\n<code>https://t.me/{config.BOT_USERNAME}?start=ref_{user['referral_code']}</code>\n\n"
+        f"Накоплено дней: <b>{user['referral_days']}</b>\n\n"
+        "За каждого привлеченного друга, который активирует пробный тариф, вы получите 7 дней.\n"
+        "Дни можно использовать для продления подписки."
+    )
+    
+    keyboard = [
+        [btn("🔄 Обновить", "menu_referral")],
+        [back_btn()]
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
 
 # ===== TARIFFS MENU =====
 def build_tariffs_menu() -> tuple[str, InlineKeyboardMarkup]:
@@ -249,6 +272,7 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     keyboard = [
         [btn("📋 Другие тарифы", "menu_tariffs"), btn("🔄 Сменить тариф", f"change_tariff_{active_sub['id']}")],
         [btn("🔁 Продлить", f"extend_{active_sub['id']}"), btn("🔗 Получить ссылку", f"get_link_{active_sub['id']}")],
+        [btn("🪙 Использовать дни", f"use_days_{active_sub['id']}")],
         [btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")],
         [back_btn()],
     ]
@@ -390,11 +414,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     context.user_data["state"] = STATE_IDLE
     
+    # Check for referral code
+    referred_by = None
+    if context.args and context.args[0].startswith("ref_"):
+        ref_code = context.args[0][4:]
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT user_id FROM users WHERE referral_code = ?", (ref_code,))
+        ref_user = cursor.fetchone()
+        # Prevent self-referral
+        if ref_user and ref_user["user_id"] != user.id:
+            referred_by = ref_user["user_id"]
+    
     user_data = {
         "user_id": user.id,
         "first_name": user.first_name or "",
         "username": user.username or "",
         "last_name": user.last_name or "",
+        "referred_by": referred_by
     }
     user_info = db.get_or_create_user(user_data)
     
@@ -696,9 +732,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
+        amount = tariff.get("price", 0)
+        
+        # Apply 10% discount for new referred users (only for paid tariffs)
+        discount = 0
+        user_info = db.get_user_by_id(user_id)
+        if user_info.get("referred_by") and not user_info.get("has_used_discount") and tariff_id not in ["trial", "basic", "premium"]:
+            discount = amount * 0.1
+            amount -= discount
+            
         # Create YooKassa payment
         order_id = f"avava_{user_id}_{tariff_id}_{uuid.uuid4().hex[:8]}"
-        amount = tariff.get("price", 0)
         
         payment_result = yookassa.create_payment(
             amount=amount,
@@ -797,6 +841,26 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Create subscription
             await _create_paid_subscription(update, user_id, tariff_id, tariff, payment_id)
+            
+            # Award referral only once per referred user
+            user_info = db.get_user_by_id(user_id)
+            if user_info.get("referred_by") and not user_info.get("has_rewarded_referrer") and tariff_id != "trial":
+                # Prevent self-reward
+                if user_info["referred_by"] != user_id:
+                    # Award referrer
+                    db.add_referral_days(user_info["referred_by"], 7)
+                    
+                    # Mark as rewarded
+                    cursor = db.conn.cursor()
+                    cursor.execute(
+                        "UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?",
+                        (user_id,)
+                    )
+                    db.conn.commit()
+                
+                # Mark discount as used
+                if discount > 0:
+                    db.set_discount_used(user_id)
             
             # If extending, cancel old subscription
             if order_id.startswith("extend_"):
@@ -1039,6 +1103,67 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Ссылка не найдена. Возможно, подписка неактивна.")
         except ValueError:
             await query.edit_message_text("❌ Ошибка ID подписки")
+            
+    elif data.startswith("use_days_"):
+        sub_id = data[10:]  # Remove "use_days_"
+        try:
+            sid = int(sub_id)
+            active_sub = db.get_subscription_by_id(sid)
+            if not active_sub or active_sub["user_id"] != user_id:
+                await query.edit_message_text("❌ Подписка не найдена")
+                return
+                
+            user_info = db.get_user_by_id(user_id)
+            if not user_info or user_info["referral_days"] <= 0:
+                await query.edit_message_text("❌ У вас нет дней для использования")
+                return
+                
+            tariff = TARIFFS.get(active_sub["tariff_id"])
+            if not tariff:
+                await query.edit_message_text("❌ Тариф не найден")
+                return
+                
+            # Calculate days to add based on tariff
+            days_to_add = user_info["referral_days"]
+            if tariff["id"] == "premium":
+                days_to_add = int(user_info["referral_days"] * 0.8)
+            
+            # Update subscription end date
+            # Handle date format
+            ends_at = active_sub["ends_at"]
+            if not ends_at:
+                ends_at = datetime.now().isoformat()
+            
+            # Strip timezone info if present
+            if "+" in ends_at:
+                ends_at = ends_at.split("+")[0]
+            
+            new_end = datetime.fromisoformat(ends_at) + timedelta(days=days_to_add)
+            cursor = db.conn.cursor()
+            cursor.execute(
+                "UPDATE subscriptions SET ends_at = ? WHERE id = ?",
+                (new_end.isoformat(), sid)
+            )
+            db.conn.commit()
+            
+            # Reset referral days
+            cursor.execute(
+                "UPDATE users SET referral_days = 0 WHERE user_id = ?",
+                (user_id,)
+            )
+            db.conn.commit()
+            
+            await query.edit_message_text(
+                f"✅ Использовано {user_info['referral_days']} дней\n"
+                f"Добавлено {days_to_add} дней к подписке\n"
+                f"Новая дата окончания: {safe_date_format(new_end.isoformat())}",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[btn("📊 Моя подписка", "menu_subscription")]])
+            )
+            
+        except Exception as e:
+            logger.error(f"Error using referral days: {e}")
+            await query.edit_message_text("❌ Ошибка при использовании дней")
             
     elif data.startswith("extend_"):
         sub_id = data[7:]  # Remove "extend_"

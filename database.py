@@ -1,6 +1,7 @@
 # Avava VPN Bot - Database Model
 import sqlite3
 import logging
+import uuid
 from datetime import datetime, timedelta
 from config import DATABASE_PATH
 
@@ -84,7 +85,12 @@ class Database:
                 registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 banned INTEGER DEFAULT 0,
                 ban_reason TEXT,
-                ban_expires TIMESTAMP
+                ban_expires TIMESTAMP,
+                referral_code TEXT UNIQUE,
+                referral_days REAL DEFAULT 0,
+                referred_by INTEGER,
+                has_used_discount BOOLEAN DEFAULT 0,
+                has_rewarded_referrer BOOLEAN DEFAULT 0
             )
         """)
 
@@ -189,15 +195,16 @@ class Database:
         if user:
             return dict(user)
         
-        # Create new user
+        # Create new user with referral code
         first_name = user_data.get("first_name", "")
         username = user_data.get("username", "")
         last_name = user_data.get("last_name", "")
+        referral_code = f"REF_{user_id}_{uuid.uuid4().hex[:6]}"
         
         cursor.execute(
-            """INSERT INTO users (user_id, username, first_name, last_name) 
-               VALUES (?, ?, ?, ?)""",
-            (user_id, username, first_name, last_name)
+            """INSERT INTO users (user_id, username, first_name, last_name, referral_code)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, username, first_name, last_name, referral_code)
         )
         self.conn.commit()
         
@@ -212,6 +219,11 @@ class Database:
             "banned": 0,
             "ban_reason": None,
             "ban_expires": None,
+            "referral_code": referral_code,
+            "referral_days": 0,
+            "referred_by": None,
+            "has_used_discount": False,
+            "has_rewarded_referrer": False
         }
 
     def is_admin(self, user_id):
@@ -467,6 +479,26 @@ class Database:
         row = cursor.fetchone()
         return row["count"] > 0 if row else False
         
+    def add_referral_days(self, user_id, days):
+        """Add referral days to user's balance."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE users SET referral_days = referral_days + ? WHERE user_id = ?",
+            (days, user_id)
+        )
+        self.conn.commit()
+        return True
+        
+    def set_discount_used(self, user_id):
+        """Mark user's discount as used."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE users SET has_used_discount = 1 WHERE user_id = ?",
+            (user_id,)
+        )
+        self.conn.commit()
+        return True
+
     def get_subscription_stats(self):
         """Get subscription statistics."""
         cursor = self.conn.cursor()
