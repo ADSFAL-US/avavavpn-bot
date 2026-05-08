@@ -398,7 +398,13 @@ class SubscriptionManager:
             
             panel_id = sub.get("panel_subscription_id")
             if panel_id:
-                self.xc.delete_subscription(panel_id)
+                try:
+                    self.xc.delete_subscription(panel_id)
+                except XControllerAPIError as e:
+                    if e.status_code == 404:
+                        logger.warning(f"Subscription {panel_id} not found in controller")
+                    else:
+                        raise
             
             self.db.cancel_subscription(subscription_id, sub['user_id'])
             return True
