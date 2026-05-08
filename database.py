@@ -138,6 +138,31 @@ class Database:
         except Exception as e:
             logger.warning(f"Migration check for test_configs_enabled failed (may be already migrated): {e}")
 
+        # Add referral_code column and generate codes for existing users
+        try:
+            cursor.execute("SELECT referral_code FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE users ADD COLUMN referral_code TEXT UNIQUE")
+            self.conn.commit()
+            logger.info("Added referral_code column to users table")
+            
+            # Generate referral codes for existing users
+            cursor.execute("SELECT user_id FROM users WHERE referral_code IS NULL")
+            users_without_code = cursor.fetchall()
+            
+            for user_row in users_without_code:
+                user_id = user_row["user_id"]
+                referral_code = f"REF_{user_id}_{uuid.uuid4().hex[:6]}"
+                cursor.execute(
+                    "UPDATE users SET referral_code = ? WHERE user_id = ?",
+                    (referral_code, user_id)
+                )
+            
+            self.conn.commit()
+            logger.info(f"Generated referral codes for {len(users_without_code)} existing users")
+        except Exception as e:
+            logger.warning(f"Migration check for referral_code failed (may be already migrated): {e}")
+
         # VPN connections table (for tracking active connections)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS vpn_connections (
