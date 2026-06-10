@@ -247,6 +247,7 @@ class XControllerClient:
         telegram_user_id: int,
         tariff: Dict[str, Any],
         preset_id: Optional[int] = None,
+        expiry_days: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Create subscription for a Telegram user based on tariff.
@@ -258,6 +259,7 @@ class XControllerClient:
             telegram_user_id: Telegram user ID
             tariff: Tariff dict from TARIFFS
             preset_id: Override preset (uses tariff preset if not specified)
+            expiry_days: Override expiry days (uses tariff duration if not set)
         
         Returns:
             Dict with subscription data or error
@@ -268,8 +270,9 @@ class XControllerClient:
         if preset_id is None and "preset_id" in tariff:
             preset_id = tariff["preset_id"]
         
-        # Calculate expiry based on tariff duration
-        expiry_days = tariff.get("duration_days", 30)
+        # Calculate expiry based on tariff duration (or override)
+        if expiry_days is None:
+            expiry_days = tariff.get("duration_days", 30)
         
         # Traffic limit
         traffic_limit_gb = tariff.get("traffic_limit_gb", 0)
@@ -303,6 +306,7 @@ class SubscriptionManager:
         tariff_id: str,
         payment_id: Optional[str] = None,
         preset_id: Optional[int] = None,
+        expiry_days: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Create complete subscription for user.
@@ -311,6 +315,8 @@ class SubscriptionManager:
             user_id: Telegram user ID
             tariff_id: Selected tariff
             payment_id: Optional payment reference
+            preset_id: Override preset
+            expiry_days: Override duration in days (uses tariff default if None)
         
         Returns:
             Dict with success status, subscription data, and VPN link
@@ -322,11 +328,15 @@ class SubscriptionManager:
             return {"success": False, "error": "Invalid tariff"}
         
         try:
+            # Determine effective duration
+            effective_days = expiry_days if expiry_days is not None else tariff.get("duration_days", 30)
+            
             # 1. Create in X-Controller
             xc_result = self.xc.create_user_subscription(
                 telegram_user_id=user_id,
                 tariff=tariff,
-                preset_id=preset_id,  # Use provided preset_id
+                preset_id=preset_id,
+                expiry_days=effective_days,
             )
             
             if not xc_result.get("success"):
@@ -338,9 +348,9 @@ class SubscriptionManager:
             
             # 2. Save to local DB
             ends_at = None
-            if tariff.get("duration_days"):
+            if effective_days:
                 from datetime import datetime, timedelta
-                ends_at = datetime.now() + timedelta(days=tariff["duration_days"])
+                ends_at = datetime.now() + timedelta(days=effective_days)
             
             db_sub_id = self.db.create_subscription(
                 user_id=user_id,
@@ -416,6 +426,7 @@ class SubscriptionManager:
         self,
         subscription_id: int,
         new_tariff_id: str,
+        expiry_days: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Change subscription to a new tariff.
@@ -429,6 +440,7 @@ class SubscriptionManager:
         Args:
             subscription_id: Current subscription ID
             new_tariff_id: New tariff ID
+            expiry_days: Override duration in days (uses tariff default if None)
             
         Returns:
             Dict with success status and new subscription data
@@ -446,6 +458,9 @@ class SubscriptionManager:
             return {"success": False, "error": "Invalid tariff"}
         
         try:
+            # Determine effective duration
+            effective_days = expiry_days if expiry_days is not None else new_tariff.get("duration_days", 30)
+            
             # 1. Cancel old subscription in panel
             old_panel_id = current_sub.get("panel_subscription_id")
             if old_panel_id:
@@ -456,7 +471,8 @@ class SubscriptionManager:
             xc_result = self.xc.create_user_subscription(
                 telegram_user_id=user_id,
                 tariff=new_tariff,
-                preset_id=new_tariff.get("preset_id"),  # Use preset_id from new tariff
+                preset_id=new_tariff.get("preset_id"),
+                expiry_days=effective_days,
             )
             
             if not xc_result.get("success"):
@@ -468,9 +484,9 @@ class SubscriptionManager:
             
             # 3. Update existing DB record with new tariff and panel data
             ends_at = None
-            if new_tariff.get("duration_days"):
+            if effective_days:
                 from datetime import datetime, timedelta
-                ends_at = datetime.now() + timedelta(days=new_tariff["duration_days"])
+                ends_at = datetime.now() + timedelta(days=effective_days)
             
             # Update the existing subscription record
             self.db.conn.execute(

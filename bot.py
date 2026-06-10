@@ -70,6 +70,8 @@ STATE_FIND_USER = "find_user"
 STATE_BAN_REASON = "ban_reason"
 STATE_PAYMENT_PENDING = "payment_pending"
 STATE_SIMULATE_REFERRAL_USERID = "simulate_ref_userid"
+STATE_ADMIN_GIVE_USER_ID = "admin_give_user_id"
+STATE_ADMIN_GIVE_DAYS = "admin_give_days"
 
 def is_admin(user_id: int) -> bool:
     """Check if user is admin."""
@@ -347,6 +349,7 @@ def build_admin_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     keyboard = [
         [btn("📊 Статистика", "admin_stats"), btn("👥 Пользователи", "admin_users")],
         [btn("📋 Подписки", "admin_subscriptions"), btn("🔍 Найти", "admin_find")],
+        [btn("🎁 Выдать подписку", "admin_give_subscription")],
         [btn("📝 Логи", "admin_logs")],
         [btn("🧪 Симуляция реферала", "admin_simulate_referral")],
         [btn("🔙 В меню", "main_menu")],
@@ -545,6 +548,121 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[back_btn("admin_panel")]])
         )
+    
+    elif state == STATE_ADMIN_GIVE_USER_ID:
+        # Получаем ID пользователя для выдачи подписки
+        try:
+            target_user_id = int(text)
+        except ValueError:
+            await update.message.reply_text("❌ Введите числовой ID пользователя")
+            return
+        
+        context.user_data["state"] = STATE_IDLE
+        
+        if not is_admin(update.effective_user.id):
+            await update.message.reply_text("❌ Нет доступа")
+            return
+        
+        # Проверяем, существует ли пользователь в БД
+        target_user = db.get_user_by_id(target_user_id)
+        if not target_user:
+            await update.message.reply_text(
+                f"❌ Пользователь <code>{target_user_id}</code> не найден в БД.\n"
+                "Сначала он должен запустить бота (/start).",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Сохраняем target_user_id, показываем выбор тарифа
+        context.user_data["admin_give_target"] = target_user_id
+        text = "🎁 <b>Выберите тариф для выдачи:</b>\n\n"
+        keyboard = []
+        for tid, tariff in TARIFFS.items():
+            price = "Бесплатно" if tariff["price"] == 0 else f"{tariff['price']}₽"
+            keyboard.append([btn(f"{tariff['name']} — {price}", f"admin_give_tariff_{tid}")])
+        keyboard.append([back_btn("admin_panel")])
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif state == STATE_ADMIN_GIVE_DAYS:
+        # Получаем количество дней
+        try:
+            days = int(text)
+        except ValueError:
+            await update.message.reply_text("❌ Введите целое число дней")
+            return
+        
+        if days <= 0:
+            await update.message.reply_text("❌ Количество дней должно быть больше 0")
+            return
+        
+        context.user_data["state"] = STATE_IDLE
+        admin_id = update.effective_user.id
+        
+        if not is_admin(admin_id):
+            await update.message.reply_text("❌ Нет доступа")
+            return
+        
+        target_user_id = context.user_data.get("admin_give_target")
+        tariff_id = context.user_data.get("admin_give_tariff")
+        
+        if not target_user_id or not tariff_id:
+            await update.message.reply_text("❌ Ошибка: данные не найдены. Начните заново.")
+            return
+        
+        tariff = TARIFFS.get(tariff_id)
+        if not tariff:
+            await update.message.reply_text("❌ Тариф не найден")
+            return
+        
+        # Проверяем, есть ли уже активная подписка
+        active_sub = db.get_active_subscription(target_user_id)
+        
+        try:
+            if active_sub:
+                # Меняем существующую подписку
+                sub_id = active_sub["id"]
+                result = subscription_manager.change_subscription(
+                    subscription_id=sub_id,
+                    new_tariff_id=tariff_id,
+                    expiry_days=days,
+                )
+                action_text = "изменена"
+            else:
+                # Создаём новую подписку
+                result = subscription_manager.create_subscription(
+                    user_id=target_user_id,
+                    tariff_id=tariff_id,
+                    preset_id=tariff.get("preset_id"),
+                    expiry_days=days,
+                )
+                action_text = "создана"
+            
+            if not result.get("success"):
+                error = result.get("error", "Неизвестная ошибка")
+                await update.message.reply_text(
+                    f"❌ <b>Ошибка выдачи подписки</b>\n\n{error}",
+                    parse_mode="HTML"
+                )
+                return
+            
+            sub_link = result.get("sub_link", "N/A")
+            db.log_admin_action(admin_id, f"give_subscription_{action_text}", target_user_id, f"tariff={tariff_id}, days={days}")
+            
+            await update.message.reply_text(
+                f"✅ <b>Подписка {action_text}!</b>\n\n"
+                f"👤 Пользователь: <code>{target_user_id}</code>\n"
+                f"📌 Тариф: {tariff['name']}\n"
+                f"⏱ Дней: {days}\n"
+                f"🔗 Ссылка: <code>{sub_link}</code>",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[back_btn("admin_panel")]])
+            )
+        except Exception as e:
+            logger.exception(f"Error giving subscription: {e}")
+            await update.message.reply_text(
+                f"❌ <b>Ошибка:</b> {str(e)}",
+                parse_mode="HTML"
+            )
     
     elif state == STATE_SIMULATE_REFERRAL_USERID:
         try:
@@ -1454,6 +1572,45 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         text, markup = build_admin_logs()
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    
+    elif data == "admin_give_subscription":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        context.user_data["state"] = STATE_ADMIN_GIVE_USER_ID
+        text = (
+            "🎁 <b>Выдать подписку пользователю</b>\n\n"
+            "Введите числовой Telegram ID пользователя:"
+        )
+        keyboard = [[back_btn("admin_panel")]]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data.startswith("admin_give_tariff_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        tariff_id = data[18:]  # Remove "admin_give_tariff_"
+        tariff = TARIFFS.get(tariff_id)
+        if not tariff:
+            await query.edit_message_text("❌ Тариф не найден")
+            return
+        
+        target_user_id = context.user_data.get("admin_give_target")
+        if not target_user_id:
+            await query.edit_message_text("❌ Ошибка: ID пользователя не найден. Начните заново.")
+            return
+        
+        context.user_data["admin_give_tariff"] = tariff_id
+        context.user_data["state"] = STATE_ADMIN_GIVE_DAYS
+        
+        text = (
+            f"🎁 <b>Выдача подписки</b>\n\n"
+            f"👤 Пользователь: <code>{target_user_id}</code>\n"
+            f"📌 Тариф: {tariff['name']}\n\n"
+            f"Введите количество дней (целое число):"
+        )
+        keyboard = [[back_btn("admin_panel")]]
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data == "admin_simulate_referral":
         if not is_admin(user_id):
