@@ -913,10 +913,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_support":
         text = (
             "🛠 <b>Поддержка Avava VPN</b>\n\n"
-            "Опишите проблему и отправьте сообщение.\n\n"
-            "Мы ответим в ближайшее время!"
+            "Если у вас возникли вопросы или проблемы, "
+            "перейдите в наш чат поддержки — там вам помогут!\n\n"
+            "👇 Нажмите кнопку ниже, чтобы открыть чат."
         )
-        keyboard = [[back_btn()]]
+        keyboard = [
+            [InlineKeyboardButton("📨 Открыть чат поддержки", url="https://t.me/+2I6sevlNpo5mMjcy")],
+            [back_btn()],
+        ]
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     
     elif data == "menu_referral":
