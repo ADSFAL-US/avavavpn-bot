@@ -65,7 +65,7 @@ class Database:
 
     def _connect(self):
         """Connect to the database."""
-        self.conn = sqlite3.connect(self.db_path)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
 
@@ -401,13 +401,19 @@ class Database:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def cancel_subscription_by_tariff(self, tariff_id):
-        """Cancel subscription by tariff ID."""
+    def cancel_subscription_by_tariff(self, tariff_id, user_id=None):
+        """Cancel subscription by tariff ID, optionally filtered by user_id."""
         cursor = self.conn.cursor()
-        cursor.execute(
-            "UPDATE subscriptions SET status = 'cancelled' WHERE tariff_id = ? AND status = 'active'",
-            (tariff_id,)
-        )
+        if user_id is not None:
+            cursor.execute(
+                "UPDATE subscriptions SET status = 'cancelled' WHERE tariff_id = ? AND user_id = ? AND status = 'active'",
+                (tariff_id, user_id)
+            )
+        else:
+            cursor.execute(
+                "UPDATE subscriptions SET status = 'cancelled' WHERE tariff_id = ? AND status = 'active'",
+                (tariff_id,)
+            )
         self.conn.commit()
         return cursor.rowcount
 
@@ -536,7 +542,61 @@ class Database:
         )
         self.conn.commit()
         return True
+    
+    def reward_referrer(self, user_id, tariff_id):
+        """Reward the referrer of a user if they haven't been rewarded yet.
         
+        Returns True if referrer was rewarded, False otherwise.
+        """
+        user = self.get_user_by_id(user_id)
+        if not user:
+            return False
+        if not user.get("referred_by") or user.get("has_rewarded_referrer"):
+            return False
+        referrer_id = user["referred_by"]
+        if referrer_id == user_id:
+            return False  # self-referral protection
+        
+        cursor = self.conn.cursor()
+        self.add_referral_days(referrer_id, 7)
+        cursor.execute("UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?", (user_id,))
+        self.conn.commit()
+        logger.info(f"Referrer {referrer_id} got 7 days for referral of {user_id} (tariff={tariff_id})")
+        
+        # Также отмечаем, что скидка использована (для платных тарифов)
+        if tariff_id not in ("trial",):
+            self.set_discount_used(user_id)
+        
+        return True
+    
+    def extend_subscription(self, subscription_id, extra_days):
+        """Extend an existing subscription's ends_at by extra_days."""
+        from datetime import datetime, timedelta
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT ends_at FROM subscriptions WHERE id = ?", (subscription_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+        ends_at = row["ends_at"]
+        if ends_at:
+            try:
+                # Strip timezone info if present
+                clean = ends_at.split("+")[0]
+                current_end = datetime.fromisoformat(clean)
+                new_end = current_end + timedelta(days=extra_days)
+            except (ValueError, TypeError):
+                logger.warning(f"Failed to parse ends_at '{ends_at}', extending from now")
+                new_end = datetime.now() + timedelta(days=extra_days)
+        else:
+            new_end = datetime.now() + timedelta(days=extra_days)
+        cursor.execute(
+            "UPDATE subscriptions SET ends_at = ? WHERE id = ?",
+            (new_end.isoformat(), subscription_id)
+        )
+        self.conn.commit()
+        logger.info(f"Extended subscription {subscription_id} by {extra_days} days, new ends_at={new_end.isoformat()}")
+        return True
+    
     def set_discount_used(self, user_id):
         """Mark user's discount as used."""
         cursor = self.conn.cursor()

@@ -533,8 +533,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # 3. Проверяем, не использовал ли тестовый пользователь пробный период
         if db.has_user_ever_had_tariff(test_user_id, "trial"):
-            # Отменяем старый trial, чтобы можно было симулировать заново
-            db.cancel_subscription_by_tariff("trial")
+            # Отменяем старый trial только для этого пользователя
+            db.cancel_subscription_by_tariff("trial", user_id=test_user_id)
             logger.info(f"Old trial cancelled for user {test_user_id} to allow simulation")
 
         # 4. Берём тариф trial
@@ -557,16 +557,8 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
         sub_link = result.get("sub_link", "N/A")
 
-        # 6. Начисляем бонус рефереру (та же логика, что должна быть в _handle_free_subscription)
-        test_user_after = db.get_user_by_id(test_user_id)
-        if test_user_after.get("referred_by") and not test_user_after.get("has_rewarded_referrer"):
-            referrer_id = test_user_after["referred_by"]
-            if referrer_id != test_user_id:  # защита от self-referral
-                db.add_referral_days(referrer_id, 7)
-                cursor = db.conn.cursor()
-                cursor.execute("UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?", (test_user_id,))
-                db.conn.commit()
-                logger.info(f"Симуляция: реферер {referrer_id} получил 7 дней за trial пользователя {test_user_id}")
+        # 6. Начисляем бонус рефереру (единый метод)
+        db.reward_referrer(test_user_id, "trial")
 
         # 7. Ответ админу
         await update.message.reply_text(
@@ -605,15 +597,8 @@ async def _handle_free_subscription(update: Update, user_id: int, tariff_id: str
         
         sub_link = result.get("sub_link", "N/A")
         
-        # Начисление реферальных дней за пробный тариф
-        user_info = db.get_user_by_id(user_id)
-        if user_info.get("referred_by") and not user_info.get("has_rewarded_referrer"):
-            if user_info["referred_by"] != user_id:
-                db.add_referral_days(user_info["referred_by"], 7)
-                cursor = db.conn.cursor()
-                cursor.execute("UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?", (user_id,))
-                db.conn.commit()
-                logger.info(f"Referral reward: user {user_info['referred_by']} got 7 days for trial of {user_id}")
+        # Начисление реферальных дней за пробный тариф (единый метод)
+        db.reward_referrer(user_id, tariff_id)
         
         text = (
             f"✅ <b>Подписка активирована!</b>\n\n"
@@ -933,7 +918,49 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         paid = check_result.get("paid", False)
         
         if status == PAYMENT_STATUS_SUCCEEDED and paid:
-            # Payment successful - create subscription
+            # Update payment status
+            payment_storage.update_payment_status(order_id, "completed", payment_id)
+            
+            # ─── Extend existing subscription ─────────────────────────────────
+            if order_id.startswith("extend_"):
+                try:
+                    # order_id = f"extend_{sid}_{uuid4_hex}"
+                    parts = order_id.split("_")
+                    old_sub_id = int(parts[1])
+                    
+                    tariff_id = payment_record.get("tariff_id")
+                    tariff = TARIFFS.get(tariff_id)
+                    extra_days = tariff["duration_days"] if tariff else 30
+                    
+                    # Просто продлеваем ends_at в локальной БД
+                    db.extend_subscription(old_sub_id, extra_days)
+                    
+                    # Получаем ссылку на подписку
+                    sub_link = subscription_manager.get_user_subscription_link(user_id) or "N/A"
+                    
+                    text = (
+                        f"✅ <b>Подписка продлена!</b>\n\n"
+                        f"📌 {tariff['name'] if tariff else '—'}\n"
+                        f"⏱ +{extra_days} дней\n\n"
+                        f"🔗 <b>Ваша ссылка для подключения:</b>\n"
+                        f"<code>{sub_link}</code>"
+                    )
+                    keyboard = [
+                        [InlineKeyboardButton("📋 Инструкция по настройке", url=sub_link)],
+                        [btn("📊 Моя подписка", "menu_subscription"), back_btn()]
+                    ]
+                    await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+                    
+                    logger.info(f"Extended subscription {old_sub_id} by {extra_days} days (order={order_id})")
+                except (IndexError, ValueError, Exception) as e:
+                    logger.error(f"Error extending subscription from order_id {order_id}: {e}")
+                    await query.edit_message_text("❌ Ошибка продления подписки. Обратитесь в поддержку.")
+                
+                # Начисляем реферальные дни (если применимо)
+                db.reward_referrer(user_id, payment_record.get("tariff_id", ""))
+                return
+            
+            # ─── New subscription (not extend) ────────────────────────────────
             tariff_id = payment_record.get("tariff_id")
             tariff = TARIFFS.get(tariff_id)
             
@@ -941,42 +968,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("❌ Тариф не найден")
                 return
             
-            # Update payment status
-            payment_storage.update_payment_status(order_id, "completed", payment_id)
-            
             # Create subscription
             await _create_paid_subscription(update, user_id, tariff_id, tariff, payment_id)
             
-            # Award referral only once per referred user
-            user_info = db.get_user_by_id(user_id)
-            if user_info.get("referred_by") and not user_info.get("has_rewarded_referrer") and tariff_id != "trial":
-                # Prevent self-reward
-                if user_info["referred_by"] != user_id:
-                    # Award referrer
-                    db.add_referral_days(user_info["referred_by"], 7)
-                    
-                    # Mark as rewarded
-                    cursor = db.conn.cursor()
-                    cursor.execute(
-                        "UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?",
-                        (user_id,)
-                    )
-                    db.conn.commit()
-                    
-                    # Mark discount as used if discount was applied
-                    if user_info.get("referred_by") and not user_info.get("has_used_discount") and tariff_id not in ["trial"]:
-                        db.set_discount_used(user_id)
-            
-            # If extending, cancel old subscription
-            if order_id.startswith("extend_"):
-                try:
-                    old_sub_id = int(order_id.split("_")[1])
-                    if subscription_manager.cancel_subscription(old_sub_id):
-                        logger.info(f"Extended: canceled old subscription {old_sub_id}")
-                    else:
-                        logger.error(f"Failed to cancel old subscription {old_sub_id} for extension")
-                except (IndexError, ValueError) as e:
-                    logger.error(f"Error parsing old_sub_id from order_id {order_id}: {e}")
+            # Award referral bonus using unified method
+            db.reward_referrer(user_id, tariff_id)
                     
         elif status == PAYMENT_STATUS_CANCELLED:
             payment_storage.update_payment_status(order_id, "cancelled", payment_id)
