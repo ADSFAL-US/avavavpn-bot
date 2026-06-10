@@ -148,10 +148,60 @@ def build_referral_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         "Дни можно использовать для продления подписки."
     )
     
-    keyboard = [
-        [btn("🔄 Обновить", "menu_referral")],
-        [back_btn()]
-    ]
+    keyboard = []
+    
+    # Кнопка использования дней — только если есть дни
+    if user["referral_days"] > 0:
+        keyboard.append([btn("🪙 Использовать дни", "use_days_menu")])
+    
+    keyboard.append([btn("🔄 Обновить", "menu_referral")])
+    keyboard.append([back_btn()])
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+# ===== USE DAYS MENU =====
+def build_use_days_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Build menu to apply referral days to a subscription."""
+    user = db.get_user_by_id(user_id)
+    if not user:
+        return "Ошибка", InlineKeyboardMarkup([[back_btn("menu_referral")]])
+    
+    days = int(user.get("referral_days", 0))
+    active_sub = db.get_active_subscription(user_id)
+    
+    text = (
+        "🪙 <b>Использовать реферальные дни</b>\n\n"
+        f"У вас накоплено: <b>{days}</b> дней\n"
+    )
+    
+    keyboard = []
+    
+    if active_sub and days > 0:
+        tariff = TARIFFS.get(active_sub["tariff_id"], {})
+        
+        # Для premium — коэффициент 0.8
+        effective_days = days
+        if tariff.get("id") == "premium":
+            effective_days = int(days * 0.8)
+            text += "💎 Для тарифа Premium применяется коэффициент 0.8\n"
+            text += f"Реально будет добавлено: <b>{effective_days}</b> дней\n\n"
+        else:
+            text += "\n"
+        
+        text += (
+            f"📌 Текущая подписка: <b>{tariff.get('name', '—')}</b>\n"
+            f"⏱ Действует до: {safe_date_format(active_sub.get('ends_at'))}\n\n"
+            f"После применения дни будут списаны, а дата окончания продлена."
+        )
+        
+        keyboard.append([btn(f"✅ Применить все {effective_days} дней", f"use_days_apply_{active_sub['id']}")])
+    elif days <= 0:
+        text += "\n❌ У вас нет накопленных дней для использования."
+    else:
+        text += "\n❌ Нет активной подписки, к которой можно применить дни.\n"
+        text += "Сначала оформите подписку через меню тарифов."
+    
+    keyboard.append([back_btn("menu_referral")])
     return text, InlineKeyboardMarkup(keyboard)
 
 
@@ -273,7 +323,6 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     keyboard = [
         [btn("📋 Другие тарифы", "menu_tariffs"), btn("🔄 Сменить тариф", f"change_tariff_{active_sub['id']}")],
         [btn("🔁 Продлить", f"extend_{active_sub['id']}"), btn("🔗 Получить ссылку", f"get_link_{active_sub['id']}")],
-        [btn("🪙 Использовать дни", f"use_days_{active_sub['id']}")],
         [btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")],
         [back_btn()],
     ]
@@ -763,6 +812,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 raise
     
+    elif data == "use_days_menu":
+        text, markup = build_use_days_menu(user_id)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    
     # ===== TARIFFS =====
     elif data.startswith("tariff_"):
         tariff_id = data[7:]  # Remove "tariff_"
@@ -1205,8 +1258,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await query.edit_message_text("❌ Ошибка ID подписки")
             
-    elif data.startswith("use_days_"):
-        sub_id = data[10:]  # Remove "use_days_"
+    elif data.startswith("use_days_apply_"):
+        sub_id = data[15:]  # Remove "use_days_apply_"
         try:
             sid = int(sub_id)
             active_sub = db.get_subscription_by_id(sid)
@@ -1215,7 +1268,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
                 
             user_info = db.get_user_by_id(user_id)
-            if not user_info or user_info["referral_days"] <= 0:
+            days_available = int(user_info.get("referral_days", 0))
+            if not user_info or days_available <= 0:
                 await query.edit_message_text("❌ У вас нет дней для использования")
                 return
                 
@@ -1223,43 +1277,38 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not tariff:
                 await query.edit_message_text("❌ Тариф не найден")
                 return
-                
-            # Calculate days to add based on tariff
-            days_to_add = user_info["referral_days"]
+            
+            # Calculate effective days (premium = 0.8 multiplier)
+            days_to_add = days_available
             if tariff["id"] == "premium":
-                days_to_add = int(user_info["referral_days"] * 0.8)
+                days_to_add = int(days_available * 0.8)
             
-            # Update subscription end date
-            # Handle date format
-            ends_at = active_sub["ends_at"]
-            if not ends_at:
-                ends_at = datetime.now().isoformat()
-            
-            # Strip timezone info if present
-            if "+" in ends_at:
-                ends_at = ends_at.split("+")[0]
-            
-            new_end = datetime.fromisoformat(ends_at) + timedelta(days=days_to_add)
-            cursor = db.conn.cursor()
-            cursor.execute(
-                "UPDATE subscriptions SET ends_at = ? WHERE id = ?",
-                (new_end.isoformat(), sid)
-            )
-            db.conn.commit()
+            # Extend subscription in local DB
+            db.extend_subscription(sid, days_to_add)
             
             # Reset referral days
+            cursor = db.conn.cursor()
             cursor.execute(
                 "UPDATE users SET referral_days = 0 WHERE user_id = ?",
                 (user_id,)
             )
             db.conn.commit()
             
+            # Refresh data to show new ends_at
+            updated_sub = db.get_subscription_by_id(sid)
+            new_ends = safe_date_format(updated_sub.get("ends_at")) if updated_sub else "N/A"
+            
             await query.edit_message_text(
-                f"✅ Использовано {user_info['referral_days']} дней\n"
-                f"Добавлено {days_to_add} дней к подписке\n"
-                f"Новая дата окончания: {safe_date_format(new_end.isoformat())}",
+                f"✅ <b>Дни применены!</b>\n\n"
+                f"📌 {tariff.get('name', 'Подписка')}\n"
+                f"🪙 Списано дней: <b>{days_available}</b>\n"
+                f"➕ Добавлено к подписке: <b>{days_to_add}</b> дней\n"
+                f"⏱ Новая дата окончания: <b>{new_ends}</b>",
                 parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[btn("📊 Моя подписка", "menu_subscription")]])
+                reply_markup=InlineKeyboardMarkup([
+                    [btn("📊 Моя подписка", "menu_subscription")],
+                    [btn("👥 Реферальная система", "menu_referral")],
+                ])
             )
             
         except Exception as e:
