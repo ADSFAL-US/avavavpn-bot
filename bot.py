@@ -7,7 +7,9 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    ChatMember,
 )
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -90,6 +92,49 @@ def safe_date_format(date_str: str | None) -> str:
         return date_str[:16].replace("T", " ")
     except (IndexError, AttributeError):
         return str(date_str)
+
+
+# ===== CHANNEL SUBSCRIPTION SOFTLOCK =====
+async def check_channel_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Check if user is subscribed to the required channel.
+    Returns True if subscribed (or check fails gracefully), False if not subscribed.
+    """
+    # Cache check — already verified this session
+    if context.user_data.get("channel_verified"):
+        return True
+
+    channel = config.REQUIRED_CHANNEL_USERNAME
+    if not channel:
+        return True  # feature disabled
+
+    try:
+        member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+        if member.status in (ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER):
+            context.user_data["channel_verified"] = True
+            return True
+        return False
+    except BadRequest:
+        # User not found in channel / not a member
+        return False
+    except Exception as e:
+        logger.warning("Channel subscription check failed for user %s: %s", user_id, e)
+        return True  # grace — don't block on errors
+
+
+def build_subscription_prompt() -> tuple[str, InlineKeyboardMarkup]:
+    """Build the subscription prompt message."""
+    channel = config.REQUIRED_CHANNEL_USERNAME
+    text = (
+        "🚫 <b>Подпишитесь на канал</b>\n\n"
+        f"Для использования бота необходимо быть подписанным на наш канал "
+        f"<a href=\"https://t.me/{channel.lstrip('@')}\">{channel}</a>.\n\n"
+        "👇 Перейдите по ссылке ниже, подпишитесь, а затем отправьте <b>любое сообщение</b> боту."
+    )
+    keyboard = [
+        [InlineKeyboardButton("🔗 Перейти к каналу", url=f"https://t.me/{channel.lstrip('@')}")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
 
 # ===== UI HELPERS =====
 def btn(text: str, callback: str) -> InlineKeyboardButton:
@@ -495,6 +540,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
+    # Channel subscription softlock
+    if config.REQUIRED_CHANNEL_USERNAME and not is_admin(user.id):
+        if not await check_channel_subscription(user.id, context):
+            text, markup = build_subscription_prompt()
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=markup)
+            return
+    
     text, reply_markup = build_main_menu(user.id)
     await update.message.reply_text(text, parse_mode="HTML", reply_markup=reply_markup)
 
@@ -502,6 +554,13 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     """Unified handler for text messages based on state."""
     state = context.user_data.get("state", STATE_IDLE)
     text = update.message.text.strip()
+    
+    # Channel subscription softlock (skip for admins)
+    if config.REQUIRED_CHANNEL_USERNAME and not is_admin(update.effective_user.id):
+        if not await check_channel_subscription(update.effective_user.id, context):
+            prompt_text, markup = build_subscription_prompt()
+            await update.message.reply_text(prompt_text, parse_mode="HTML", reply_markup=markup)
+            return
     
     if state == STATE_FIND_USER:
         # Handle find user input
@@ -894,6 +953,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_banned(user_id):
         await query.edit_message_text("🚫 Доступ заблокирован")
         return
+    
+    # Channel subscription softlock
+    if config.REQUIRED_CHANNEL_USERNAME and not is_admin(user_id):
+        if not await check_channel_subscription(user_id, context):
+            text, markup = build_subscription_prompt()
+            await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+            return
     
     # ===== MAIN MENU =====
     if data == "main_menu":

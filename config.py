@@ -30,6 +30,9 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
 YOOKASSA_API_KEY = os.getenv("YOOKASSA_API_KEY", "")
 YOOKASSA_TEST_MODE = os.getenv("YOOKASSA_TEST_MODE", "true").lower() == "true"
 
+# Channel subscription softlock
+REQUIRED_CHANNEL_USERNAME = os.getenv("REQUIRED_CHANNEL_USERNAME", "@AvavaVpn")
+
 # Bot Settings
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@support")
 DEFAULT_TRIAL_DAYS = int(os.getenv("DEFAULT_TRIAL_DAYS", "3"))
