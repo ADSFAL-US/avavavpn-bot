@@ -113,9 +113,15 @@ async def check_channel_subscription(user_id: int, context: ContextTypes.DEFAULT
             context.user_data["channel_verified"] = True
             return True
         return False
-    except BadRequest:
-        # User not found in channel / not a member
-        return False
+    except BadRequest as e:
+        # "user not found" — пользователь никогда не был в канале / не подписан
+        # Другие BadRequest (чат не найден, бот не админ) — пропускаем
+        err_msg = str(e).lower()
+        logger.info("BadRequest checking subscription for user %s: %s", user_id, e)
+        if "user not found" in err_msg or "not found" in err_msg:
+            return False
+        # chat not found, bot not admin, etc. — не блокируем
+        return True
     except Exception as e:
         logger.warning("Channel subscription check failed for user %s: %s", user_id, e)
         return True  # grace — don't block on errors
