@@ -179,7 +179,7 @@ class Database:
         
         # Create unique index for referral_code if not exists
         try:
-            cursor.execute("CREATE UNIQUE INDEX idx_users_referral_code ON users(referral_code)")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)")
             self.conn.commit()
             logger.info("Created unique index for referral_code")
         except sqlite3.OperationalError as e:

@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy bot files
 COPY *.py ./
+COPY handlers/ ./handlers/
 
 # Create data directory
 RUN mkdir -p /app/data
