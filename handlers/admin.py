@@ -1,20 +1,18 @@
 # handlers/admin.py — Admin panel, user management, bans, give subscription, referral simulation
 import logging
-import uuid
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from database import db, TARIFFS
-import app_context
 from utils import (
     STATE_FIND_USER, STATE_BAN_REASON, STATE_ADMIN_GIVE_USER_ID,
     STATE_ADMIN_GIVE_DAYS, STATE_SIMULATE_REFERRAL_USERID,
-    is_admin, btn, back_btn,
+    back_btn,
 )
 from keyboards import (
     build_admin_panel, build_admin_stats, build_admin_users,
-    build_admin_subscriptions, build_admin_logs, build_user_detail,
+    build_admin_subscriptions, build_admin_logs,
 )
 
 logger = logging.getLogger(__name__)

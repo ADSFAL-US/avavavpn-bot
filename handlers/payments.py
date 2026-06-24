@@ -9,13 +9,8 @@ from database import db, TARIFFS
 from yookassa import PAYMENT_STATUS_SUCCEEDED, PAYMENT_STATUS_CANCELLED
 import app_context
 from utils import (
-    check_banned, is_admin, safe_date_format, btn, back_btn,
-    check_channel_subscription, build_subscription_prompt,
+    safe_date_format, btn, back_btn,
     STATE_PAYMENT_PENDING,
-)
-from keyboards import (
-    build_main_menu, build_tariffs_menu, build_tariff_detail,
-    build_subscription_view,
 )
 from handlers.subscriptions import (
     handle_free_subscription,

@@ -1,7 +1,6 @@
 # Avava VPN Bot - YooKassa Payment Integration
 import requests
 import datetime
-import json
 import logging
 import sqlite3
 import uuid

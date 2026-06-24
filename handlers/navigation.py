@@ -7,8 +7,7 @@ from telegram.ext import ContextTypes
 from database import db, TARIFFS
 import app_context
 from utils import (
-    check_banned, is_admin, safe_date_format, btn, back_btn,
-    check_channel_subscription, build_subscription_prompt,
+    safe_date_format, btn, back_btn,
 )
 from keyboards import (
     build_main_menu, build_tariffs_menu, build_tariff_detail,

@@ -2,11 +2,10 @@
 import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
 
 from database import db, TARIFFS
 from utils import btn, back_btn
-from app_context import subscription_manager
+import app_context
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +15,12 @@ async def handle_free_subscription(update: Update, user_id: int, tariff_id: str,
     query = update.callback_query
     
     try:
+        if not app_context.subscription_manager:
+            await query.edit_message_text("❌ Сервис подписок временно недоступен")
+            return
+
         # Create subscription via SubscriptionManager
-        result = subscription_manager.create_subscription(
+        result = app_context.subscription_manager.create_subscription(
             user_id=user_id,
             tariff_id=tariff_id,
             preset_id=tariff.get("preset_id"),
@@ -62,7 +65,15 @@ async def create_paid_subscription(update: Update, user_id: int, tariff_id: str,
     query = update.callback_query
     
     try:
-        result = subscription_manager.create_subscription(
+        if not app_context.subscription_manager:
+            await query.edit_message_text(
+                f"❌ <b>Сервис подписок недоступен</b>\n\n"
+                f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
+                parse_mode="HTML"
+            )
+            return
+
+        result = app_context.subscription_manager.create_subscription(
             user_id=user_id,
             tariff_id=tariff_id,
             payment_id=payment_id,
@@ -111,11 +122,11 @@ async def handle_tariff_change(update: Update, user_id: int, sub_id: int, new_ta
     query = update.callback_query
     
     try:
-        if not subscription_manager:
+        if not app_context.subscription_manager:
             await query.edit_message_text("❌ Сервис подписок недоступен")
             return
         
-        result = subscription_manager.change_subscription(sub_id, new_tariff_id)
+        result = app_context.subscription_manager.change_subscription(sub_id, new_tariff_id)
         
         if not result.get("success"):
             error = result.get("error", "Unknown error")
