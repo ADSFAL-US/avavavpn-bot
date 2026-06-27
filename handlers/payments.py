@@ -152,57 +152,20 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    # Check payment status with YooKassa
+    # Check payment ID
     payment_id = payment_record.get("payment_id")
     if not payment_id:
         await query.edit_message_text("❌ Ошибка: ID платежа не найден")
         return
 
-    check_result = app_context.yookassa.check_payment(payment_id)
-
-    if check_result.get("error"):
-        await query.edit_message_text(
-            f"❌ <b>Ошибка проверки</b>\n\n"
-            f"{check_result['error']}"
-        )
-        return
-
-    status = check_result.get("status")
-    paid = check_result.get("paid", False)
-
-    # ─── Handle succeeded or already-paid payments ──────────────────
-    if (status == PAYMENT_STATUS_SUCCEEDED and paid) or paid:
-        # If payment is paid but not yet captured/succeeded — capture it now
-        if status != PAYMENT_STATUS_SUCCEEDED:
-            logger.info(f"Payment {payment_id} is paid but status={status}, attempting capture...")
-            capture_result = app_context.yookassa.capture_payment(payment_id)
-            if capture_result.get("error"):
-                logger.error(f"Capture failed for {payment_id}: {capture_result['error']}")
-                await query.edit_message_text(
-                    f"❌ <b>Ошибка обработки платежа</b>\n\n"
-                    f"Платёж уже проведён, но не удалось завершить оформление.\n"
-                    f"Пожалуйста, обратитесь в поддержку с ID: <code>{payment_id}</code>",
-                    parse_mode="HTML"
-                )
-                return
-            logger.info(f"Payment {payment_id} captured successfully: {capture_result.get('status')}")
-            # Re-check status after capture
-            check_result = app_context.yookassa.check_payment(payment_id)
-            if check_result.get("error"):
-                logger.error(f"Re-check failed after capture: {check_result['error']}")
-            else:
-                status = check_result.get("status")
-                paid = check_result.get("paid", False)
-                if status != PAYMENT_STATUS_SUCCEEDED:
-                    logger.warning(f"After capture, status={status}, paid={paid} — proceeding anyway")
-
-        # Update payment status
+    # ─── Success processing (extend or new sub) ────────────────────
+    async def _process_successful_payment():
+        """Handle payment success — common for both succeeded and force-captured flows."""
         app_context.payment_storage.update_payment_status(order_id, "completed", payment_id)
 
-        # ─── Extend existing subscription ─────────────────────────────────
+        # ─── Extend existing subscription ─────────────────────────────
         if order_id.startswith("extend_"):
             try:
-                # order_id = f"extend_{sid}_{uuid4_hex}"
                 parts = order_id.split("_")
                 old_sub_id = int(parts[1])
 
@@ -210,15 +173,9 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
                 tariff = TARIFFS.get(tariff_id)
                 extra_days = tariff["duration_days"] if tariff else 30
 
-                # Продлеваем через SubscriptionManager (локальная БД + x-controller + панели)
-                result = app_context.subscription_manager.extend_subscription(
-                    old_sub_id, extra_days
-                )
-
+                result = app_context.subscription_manager.extend_subscription(old_sub_id, extra_days)
                 if not result.get("success"):
-                    error = result.get("error", "Unknown error")
-                    logger.error(f"Extension failed: {error}")
-                    # Всё равно показываем успех, т.к. локальная БД обновлена
+                    logger.error(f"Extension failed: {result.get('error')}")
 
                 sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
 
@@ -234,57 +191,99 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
                     [btn("📊 Моя подписка", "menu_subscription"), back_btn()]
                 ]
                 await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-
                 logger.info(f"Extended subscription {old_sub_id} by {extra_days} days (order={order_id})")
             except (IndexError, ValueError, Exception) as e:
                 logger.error(f"Error extending subscription from order_id {order_id}: {e}")
                 await query.edit_message_text("❌ Ошибка продления подписки. Обратитесь в поддержку.")
 
-            # Начисляем реферальные дни (если применимо)
             db.reward_referrer(user_id, payment_record.get("tariff_id", ""))
             return
 
-        # ─── New subscription (not extend) ────────────────────────────────
+        # ─── New subscription (not extend) ────────────────────────────
         tariff_id = payment_record.get("tariff_id")
         tariff = TARIFFS.get(tariff_id)
-
         if not tariff:
             await query.edit_message_text("❌ Тариф не найден")
             return
 
-        # Create subscription
         await create_paid_subscription(update, user_id, tariff_id, tariff, payment_id)
-
-        # Award referral bonus using unified method
         db.reward_referrer(user_id, tariff_id)
 
-    elif status == PAYMENT_STATUS_CANCELLED:
+    check_result = app_context.yookassa.check_payment(payment_id)
+
+    if check_result.get("error"):
+        await query.edit_message_text(
+            f"❌ <b>Ошибка проверки</b>\n\n"
+            f"{check_result['error']}"
+        )
+        return
+
+    status = check_result.get("status")
+    paid = check_result.get("paid", False)
+
+    # ─── Payment is completed or already paid (funds captured) ─────
+    if (status == PAYMENT_STATUS_SUCCEEDED and paid) or paid:
+        # If paid but not yet succeeded — force-capture first
+        if status != PAYMENT_STATUS_SUCCEEDED:
+            logger.info(f"Payment {payment_id} paid but status={status}, attempting capture...")
+            capture_result = app_context.yookassa.capture_payment(payment_id)
+            if capture_result.get("error"):
+                logger.error(f"Capture failed: {capture_result['error']}")
+                await query.edit_message_text(
+                    f"❌ <b>Ошибка обработки платежа</b>\n\n"
+                    f"Платёж уже проведён, но не удалось завершить оформление.\n"
+                    f"Пожалуйста, обратитесь в поддержку с ID: <code>{payment_id}</code>",
+                    parse_mode="HTML"
+                )
+                return
+            logger.info(f"Payment captured: {capture_result.get('status')}")
+
+        await _process_successful_payment()
+        return
+
+    # ─── Cancelled ─────────────────────────────────────────────────
+    if status == PAYMENT_STATUS_CANCELLED:
         app_context.payment_storage.update_payment_status(order_id, "cancelled", payment_id)
         await query.edit_message_text(
             "❌ <b>Платеж отменен</b>\n\n"
             "Вы можете попробовать снова."
         )
-    else:
-        # Still pending
-        await query.answer("⏳ Платеж в обработке...")
-        try:
-            await query.edit_message_text(
-                f"⏳ <b>Платеж в обработке</b>\n\n"
-                f"Статус: {status}\n\n"
-                f"Если вы уже оплатили, подождите несколько минут и проверьте снова.",
-                reply_markup=InlineKeyboardMarkup([
-                    [btn("🔄 Проверить снова", f"check_payment_{order_id}")],
-                    [back_btn("menu_tariffs")],
-                ])
-            )
-        except Exception as e:
-            error_str = str(e)
-            if "Message is not modified" in error_str:
-                # Сообщение не изменилось с прошлого раза — нормально, просто отвечаем
-                await query.answer("⏳ Платеж всё ещё в обработке")
-            else:
-                logger.warning(f"Failed to update payment check message: {e}")
-                await query.answer("⏳ Статус не изменился")
+        return
+
+    # ─── Pending / other — try force-capture (YooKassa API may be stale) ──
+    await query.answer("⏳ Проверяем статус...")
+    logger.info(f"Payment {payment_id} status={status}, paid={paid} — attempting force-capture")
+
+    capture_result = app_context.yookassa.capture_payment(payment_id)
+    if not capture_result.get("error"):
+        logger.info(f"Force-capture succeeded for {payment_id}: {capture_result.get('status')}")
+        # Re-check fresh status from YooKassa
+        fresh = app_context.yookassa.check_payment(payment_id)
+        if not fresh.get("error") and (fresh.get("paid") or fresh.get("status") == PAYMENT_STATUS_SUCCEEDED):
+            check_result = fresh
+            status = fresh.get("status", PAYMENT_STATUS_SUCCEEDED)
+            paid = fresh.get("paid", True)
+            await _process_successful_payment()
+            return
+
+    # Still stuck in pending — show message
+    try:
+        await query.edit_message_text(
+            f"⏳ <b>Платеж в обработке</b>\n\n"
+            f"Статус: {status}\n\n"
+            f"Если вы уже оплатили, подождите несколько минут и проверьте снова.",
+            reply_markup=InlineKeyboardMarkup([
+                [btn("🔄 Проверить снова", f"check_payment_{order_id}")],
+                [back_btn("menu_tariffs")],
+            ])
+        )
+    except Exception as e:
+        error_str = str(e)
+        if "Message is not modified" in error_str:
+            await query.answer("⏳ Платеж всё ещё в обработке")
+        else:
+            logger.warning(f"Failed to update payment check message: {e}")
+            await query.answer("⏳ Статус не изменился")
 
 
 async def handle_change_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str):
