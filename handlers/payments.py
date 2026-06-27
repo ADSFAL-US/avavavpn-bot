@@ -250,21 +250,26 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
-    # ─── Pending / other — try force-capture (YooKassa API may be stale) ──
+    # ─── Pending / other — re-check fresh status, capture may already be done ──
     await query.answer("⏳ Проверяем статус...")
-    logger.info(f"Payment {payment_id} status={status}, paid={paid} — attempting force-capture")
+    logger.info(f"Payment {payment_id} status={status}, paid={paid} — re-checking fresh status")
 
-    capture_result = app_context.yookassa.capture_payment(payment_id)
-    if not capture_result.get("error"):
-        logger.info(f"Force-capture succeeded for {payment_id}: {capture_result.get('status')}")
-        # Re-check fresh status from YooKassa
-        fresh = app_context.yookassa.check_payment(payment_id)
-        if not fresh.get("error") and (fresh.get("paid") or fresh.get("status") == PAYMENT_STATUS_SUCCEEDED):
+    # Payment was created with capture=True. If API still shows pending,
+    # it's a propagation delay — the payment may already be succeeded on YooKassa side.
+    fresh = app_context.yookassa.check_payment(payment_id)
+    if not fresh.get("error"):
+        fresh_status = fresh.get("status")
+        fresh_paid = fresh.get("paid", False)
+        logger.info(f"Payment {payment_id} re-check: status={fresh_status}, paid={fresh_paid}")
+        if fresh_status == PAYMENT_STATUS_SUCCEEDED or fresh_paid:
             check_result = fresh
-            status = fresh.get("status", PAYMENT_STATUS_SUCCEEDED)
-            paid = fresh.get("paid", True)
+            status = fresh_status or PAYMENT_STATUS_SUCCEEDED
+            paid = fresh_paid or True
             await _process_successful_payment()
             return
+        else:
+            status = fresh_status or status
+            paid = fresh_paid or paid
 
     # Still stuck in pending — show message
     try:
