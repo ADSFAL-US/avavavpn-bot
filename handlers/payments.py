@@ -170,7 +170,32 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
     status = check_result.get("status")
     paid = check_result.get("paid", False)
 
-    if status == PAYMENT_STATUS_SUCCEEDED and paid:
+    # ─── Handle succeeded or already-paid payments ──────────────────
+    if (status == PAYMENT_STATUS_SUCCEEDED and paid) or paid:
+        # If payment is paid but not yet captured/succeeded — capture it now
+        if status != PAYMENT_STATUS_SUCCEEDED:
+            logger.info(f"Payment {payment_id} is paid but status={status}, attempting capture...")
+            capture_result = app_context.yookassa.capture_payment(payment_id)
+            if capture_result.get("error"):
+                logger.error(f"Capture failed for {payment_id}: {capture_result['error']}")
+                await query.edit_message_text(
+                    f"❌ <b>Ошибка обработки платежа</b>\n\n"
+                    f"Платёж уже проведён, но не удалось завершить оформление.\n"
+                    f"Пожалуйста, обратитесь в поддержку с ID: <code>{payment_id}</code>",
+                    parse_mode="HTML"
+                )
+                return
+            logger.info(f"Payment {payment_id} captured successfully: {capture_result.get('status')}")
+            # Re-check status after capture
+            check_result = app_context.yookassa.check_payment(payment_id)
+            if check_result.get("error"):
+                logger.error(f"Re-check failed after capture: {check_result['error']}")
+            else:
+                status = check_result.get("status")
+                paid = check_result.get("paid", False)
+                if status != PAYMENT_STATUS_SUCCEEDED:
+                    logger.warning(f"After capture, status={status}, paid={paid} — proceeding anyway")
+
         # Update payment status
         app_context.payment_storage.update_payment_status(order_id, "completed", payment_id)
 
@@ -242,15 +267,24 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         # Still pending
         await query.answer("⏳ Платеж в обработке...")
-        await query.edit_message_text(
-            f"⏳ <b>Платеж в обработке</b>\n\n"
-            f"Статус: {status}\n\n"
-            f"Если вы уже оплатили, подождите несколько минут и проверьте снова.",
-            reply_markup=InlineKeyboardMarkup([
-                [btn("🔄 Проверить снова", f"check_payment_{order_id}")],
-                [back_btn("menu_tariffs")],
-            ])
-        )
+        try:
+            await query.edit_message_text(
+                f"⏳ <b>Платеж в обработке</b>\n\n"
+                f"Статус: {status}\n\n"
+                f"Если вы уже оплатили, подождите несколько минут и проверьте снова.",
+                reply_markup=InlineKeyboardMarkup([
+                    [btn("🔄 Проверить снова", f"check_payment_{order_id}")],
+                    [back_btn("menu_tariffs")],
+                ])
+            )
+        except Exception as e:
+            error_str = str(e)
+            if "Message is not modified" in error_str:
+                # Сообщение не изменилось с прошлого раза — нормально, просто отвечаем
+                await query.answer("⏳ Платеж всё ещё в обработке")
+            else:
+                logger.warning(f"Failed to update payment check message: {e}")
+                await query.answer("⏳ Статус не изменился")
 
 
 async def handle_change_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str):
@@ -407,7 +441,21 @@ async def handle_check_change_payment(update: Update, context: ContextTypes.DEFA
     status = check_result.get("status")
     paid = check_result.get("paid", False)
 
-    if status == PAYMENT_STATUS_SUCCEEDED and paid:
+    if (status == PAYMENT_STATUS_SUCCEEDED and paid) or paid:
+        # If payment is paid but not yet captured/succeeded — capture it now
+        if status != PAYMENT_STATUS_SUCCEEDED:
+            logger.info(f"Payment {payment_id} is paid but status={status}, attempting capture...")
+            capture_result = app_context.yookassa.capture_payment(payment_id)
+            if capture_result.get("error"):
+                logger.error(f"Capture failed for {payment_id}: {capture_result['error']}")
+                await query.edit_message_text(
+                    f"❌ <b>Ошибка обработки платежа</b>\n\n"
+                    f"ID: <code>{payment_id}</code>",
+                    parse_mode="HTML"
+                )
+                return
+            logger.info(f"Payment {payment_id} captured: {capture_result.get('status')}")
+
         parts = order_id.split("_")
         if len(parts) >= 4:
             sub_id = int(parts[2])
