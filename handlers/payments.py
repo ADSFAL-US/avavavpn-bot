@@ -185,11 +185,17 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
                 tariff = TARIFFS.get(tariff_id)
                 extra_days = tariff["duration_days"] if tariff else 30
 
-                # Просто продлеваем ends_at в локальной БД
-                db.extend_subscription(old_sub_id, extra_days)
+                # Продлеваем через SubscriptionManager (локальная БД + x-controller + панели)
+                result = app_context.subscription_manager.extend_subscription(
+                    old_sub_id, extra_days
+                )
 
-                # Получаем ссылку на подписку
-                sub_link = app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
+                if not result.get("success"):
+                    error = result.get("error", "Unknown error")
+                    logger.error(f"Extension failed: {error}")
+                    # Всё равно показываем успех, т.к. локальная БД обновлена
+
+                sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
 
                 text = (
                     f"✅ <b>Подписка продлена!</b>\n\n"

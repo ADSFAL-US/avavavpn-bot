@@ -399,6 +399,70 @@ class SubscriptionManager:
         
         return None
     
+    def extend_subscription(self, subscription_id: int, extra_days: int) -> dict:
+        """
+        Extend an existing subscription: update local DB + notify x-controller
+        so panels get the new expiry date.
+
+        Args:
+            subscription_id: Local subscription ID
+            extra_days: Number of days to add
+
+        Returns:
+            Dict with success status, new ends_at and sub_link
+        """
+        sub = self.db.get_subscription_by_id(subscription_id)
+        if not sub:
+            return {"success": False, "error": "Subscription not found"}
+
+        # 1. Extend in local DB (this also recalculates ends_at)
+        self.db.extend_subscription(subscription_id, extra_days)
+
+        # 2. Refresh sub to get updated ends_at and calculate total expiry_days
+        updated_sub = self.db.get_subscription_by_id(subscription_id)
+        panel_id = updated_sub.get("panel_subscription_id")
+
+        if panel_id:
+            # Calculate total expiry days from creation or from now + extra
+            from datetime import datetime
+            ends_at_str = updated_sub.get("ends_at")
+            if ends_at_str:
+                try:
+                    clean = ends_at_str.split("+")[0]
+                    new_end = datetime.fromisoformat(clean)
+                    # Calculate how many days from now to new end
+                    total_expiry_days = max(1, (new_end - datetime.now()).days)
+                except (ValueError, TypeError):
+                    total_expiry_days = extra_days
+            else:
+                total_expiry_days = extra_days
+
+            try:
+                # 3. Update expiry on x-controller → triggers sync to panels
+                self.xc.update_subscription(
+                    subscription_id=panel_id,
+                    expiry_days=total_expiry_days,
+                )
+                logger.info(
+                    f"Extended panel subscription {panel_id} by {extra_days} days "
+                    f"(total_expiry_days={total_expiry_days})"
+                )
+            except Exception as e:
+                logger.error(f"Failed to update x-controller for extension: {e}")
+                # Don't fail — local DB is updated, panel sync will catch up
+
+        # 4. Build subscription link
+        sub_token = updated_sub.get("panel_sub_token")
+        sub_link = self.xc.get_subscription_link(sub_token) if sub_token else None
+
+        logger.info(f"Subscription {subscription_id} extended by {extra_days} days")
+
+        return {
+            "success": True,
+            "subscription_id": subscription_id,
+            "sub_link": sub_link,
+        }
+
     def cancel_subscription(self, subscription_id: int) -> bool:
         """Cancel subscription in both panel and local DB."""
         try:

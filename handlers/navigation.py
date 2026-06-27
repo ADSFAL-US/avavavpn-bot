@@ -156,8 +156,10 @@ async def handle_use_days_apply(update: Update, context: ContextTypes.DEFAULT_TY
         if tariff["id"] == "premium":
             days_to_add = int(days_available * 0.8)
 
-        # Extend subscription in local DB
-        db.extend_subscription(sid, days_to_add)
+        # Extend subscription via SubscriptionManager (local DB + x-controller + panels)
+        result = app_context.subscription_manager.extend_subscription(sid, days_to_add)
+        if not result.get("success"):
+            logger.warning(f"Referral days extension sync failed: {result.get('error')}")
 
         # Reset referral days
         cursor = db.conn.cursor()
