@@ -38,12 +38,17 @@ async def check_banned(user_id: int) -> bool:
 
 
 def safe_date_format(date_str: str | None) -> str:
-    """Safely format date string."""
+    """Safely format date string without dropping the time portion."""
     if not date_str:
         return "N/A"
     try:
-        return date_str[:16].replace("T", " ")
-    except (IndexError, AttributeError):
+        text = str(date_str).strip()
+        if not text:
+            return "N/A"
+        if "T" in text:
+            return text.replace("T", " ", 1)[:19]
+        return text
+    except (AttributeError, TypeError, IndexError):
         return str(date_str)
 
 
@@ -89,14 +94,22 @@ async def check_channel_subscription(user_id: int, context) -> bool:
 
 def build_subscription_prompt() -> tuple[str, InlineKeyboardMarkup]:
     """Build the subscription prompt message."""
-    channel = config.REQUIRED_CHANNEL_USERNAME
-    text = (
-        "🚫 <b>Подпишитесь на канал</b>\n\n"
-        f"Для использования бота необходимо быть подписанным на наш канал "
-        f"<a href=\"https://t.me/{channel.lstrip('@')}\">{channel}</a>.\n\n"
-        "👇 Перейдите по ссылке ниже, подпишитесь, а затем отправьте <b>любое сообщение</b> боту."
-    )
-    keyboard = [
-        [InlineKeyboardButton("🔗 Перейти к каналу", url=f"https://t.me/{channel.lstrip('@')}")],
-    ]
+    channel = (config.REQUIRED_CHANNEL_USERNAME or "").strip()
+    if channel:
+        text = (
+            "🚫 <b>Подпишитесь на канал</b>\n\n"
+            f"Для использования бота необходимо быть подписанным на наш канал "
+            f"<a href=\"https://t.me/{channel.lstrip('@')}\">{channel}</a>.\n\n"
+            "👇 Перейдите по ссылке ниже, подпишитесь, а затем отправьте <b>любое сообщение</b> боту."
+        )
+        keyboard = [
+            [InlineKeyboardButton("🔗 Перейти к каналу", url=f"https://t.me/{channel.lstrip('@')}")],
+        ]
+    else:
+        text = (
+            "🚫 <b>Подпишитесь на канал</b>\n\n"
+            "Для использования бота необходимо быть подписанным на наш канал.\n\n"
+            "Подпишитесь на канал, а затем отправьте <b>любое сообщение</b> боту."
+        )
+        keyboard = []
     return text, InlineKeyboardMarkup(keyboard)

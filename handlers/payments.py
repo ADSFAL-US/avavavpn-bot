@@ -73,6 +73,26 @@ async def handle_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, u
         )
         return
 
+    try:
+        panel_health = app_context.subscription_manager.xc.health_check()
+        if not panel_health or str(panel_health.get("status", "")).lower() != "healthy":
+            logger.warning("Blocking payment because panel is unavailable: %s", panel_health)
+            await query.edit_message_text(
+                "⚠️ <b>Подписочная панель временно недоступна</b>\n\n"
+                "Оплата сейчас не может быть завершена, потому что сервис подписок не отвечает."
+                "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+                parse_mode="HTML"
+            )
+            return
+    except Exception as exc:
+        logger.warning("Could not check panel health before payment: %s", exc)
+        await query.edit_message_text(
+            "⚠️ <b>Подписочная панель временно недоступна</b>\n\n"
+            "Оплата сейчас не может быть завершена. Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            parse_mode="HTML"
+        )
+        return
+
     amount = tariff.get("price", 0)
 
     # Apply 10% discount for new referred users (only for paid tariffs)
@@ -174,8 +194,33 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
                 extra_days = tariff["duration_days"] if tariff else 30
 
                 result = app_context.subscription_manager.extend_subscription(old_sub_id, extra_days)
+                
                 if not result.get("success"):
-                    logger.error(f"Extension failed: {result.get('error')}")
+                    error_msg = result.get('error', 'Unknown error')
+                    logger.error(f"Extension failed: {error_msg}")
+                    
+                    if result.get("local_db_updated"):
+                        sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
+                        text = (
+                            f"⚠️ <b>Подписка продлена локально, но синхронизация с панелью не удалась</b>\n\n"
+                            f"📌 {tariff['name'] if tariff else '—'}\n"
+                            f"⏱ +{extra_days} дней\n\n"
+                            f"🔗 <b>Ваша ссылка для подключения:</b>\n"
+                            f"<code>{sub_link}</code>\n\n"
+                            f"❗ <i>Панель будет обработана позднее, но уже сейчас подписка сохранена локально.</i>\n"
+                            f"<i>Если проблема повторится — обратитесь в поддержку.</i>"
+                        )
+                    else:
+                        text = "❌ <b>Ошибка продления подписки</b>\n\nОбратитесь в поддержку."
+                        sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("📋 Инструкция по настройке", url=sub_link)] if sub_link and sub_link != "N/A" else [],
+                        [btn("📊 Моя подписка", "menu_subscription"), back_btn()]
+                    ]
+                    await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+                    db.reward_referrer(user_id, payment_record.get("tariff_id", ""))
+                    return
 
                 sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
 

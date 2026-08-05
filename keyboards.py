@@ -1,9 +1,14 @@
 """Keyboard and menu builders for Avava VPN Bot."""
+from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+import logging
 
 import config
+import app_context
 from database import db, TARIFFS
 from utils import btn, back_btn, safe_date_format, is_admin
+
+logger = logging.getLogger(__name__)
 
 
 # ===== MAIN MENU =====
@@ -34,7 +39,8 @@ def build_main_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     if active_sub:
         keyboard.append([btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")])
     
-    keyboard.append([btn("👥 Реферальная система", "menu_referral"), btn(" Поддержка", "menu_support")])
+    keyboard.append([btn("👥 Реферальная система", "menu_referral"), btn("🛠 Поддержка", "menu_support")])
+    keyboard.append([btn("📡 Статус серверов", "user_node_status")])
     
     if is_admin(user_id):
         keyboard.append([btn("👑 Админ-панель", "admin_panel")])
@@ -106,9 +112,11 @@ def build_use_days_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         keyboard.append([btn(f"✅ Применить все {effective_days} дней", f"use_days_apply_{active_sub['id']}")])
     elif days <= 0:
         text += "\n❌ У вас нет накопленных дней для использования."
+        text += "\n\n⚠️ Для использования дней сначала оформите активную подписку."
     else:
         text += "\n❌ Нет активной подписки, к которой можно применить дни.\n"
         text += "Сначала оформите подписку через меню тарифов."
+        text += "\n\n⚠️ У вас нет накопленных дней для использования в текущем сценарии."
     
     keyboard.append([back_btn("menu_referral")])
     return text, InlineKeyboardMarkup(keyboard)
@@ -219,6 +227,49 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     else:
         traffic = "\n📊 <b>Трафик:</b> без ограничений\n"
     
+    # Whitelist bypass traffic (глушилки)
+    whitelist_traffic = ""
+    panel_sub_id = active_sub.get("panel_subscription_id")
+    if panel_sub_id and app_context.xcontroller:
+        try:
+            wt = app_context.xcontroller.get_whitelist_bypass_traffic(panel_sub_id)
+            if wt.get("success"):
+                used_wl = wt.get("used_gb", 0)
+                limit_wl = wt.get("limit_gb", 50)
+                remaining_wl = wt.get("remaining_gb", 50)
+                configs_count = wt.get("configs_count", 0)
+                is_exhausted = wt.get("is_exhausted", False)
+                
+                percent_wl = min(100, int((used_wl / limit_wl) * 100)) if limit_wl > 0 else 0
+                bar_fill_wl = int(percent_wl / 10)
+                bar_wl = "█" * bar_fill_wl + "░" * (10 - bar_fill_wl)
+                
+                status_emoji = "🔴" if is_exhausted else "🟢"
+                
+                whitelist_traffic = (
+                    f"\n{status_emoji} <b>Трафик обхода белых списков (глушилки):</b>\n"
+                    f"<code>[{bar_wl}] {percent_wl}%</code>\n"
+                    f"Использовано: <b>{used_wl:.2f}</b> / {limit_wl:.1f} ГБ\n"
+                    f"Осталось: <b>{remaining_wl:.2f}</b> ГБ\n"
+                    f"Конфигов: <b>{configs_count}</b>"
+                )
+            else:
+                whitelist_traffic = (
+                    f"\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\n"
+                    f"Недоступно"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to get whitelist bypass traffic: {e}")
+            whitelist_traffic = (
+                f"\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\n"
+                f"Ошибка загрузки"
+            )
+    else:
+        whitelist_traffic = (
+            f"\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\n"
+            f"50.00 / 50.0 ГБ (нет конфигов)"
+        )
+    
     text = (
         f"📌 <b>{tariff.get('name', 'Подписка')}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -227,6 +278,7 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         f"🧪 <b>Тестовые конфиги:</b> {'✅ Доступ' if active_sub.get('test_configs_enabled') else '❌ Нет доступа'}\n"
         f"⏱ <b>До:</b> {safe_date_format(active_sub.get('ends_at'))}"
         + traffic
+        + whitelist_traffic
     )
     
     keyboard = [
@@ -258,7 +310,8 @@ def build_admin_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         [btn("🎁 Выдать подписку", "admin_give_subscription")],
         [btn("📝 Логи", "admin_logs")],
         [btn("🧪 Симуляция реферала", "admin_simulate_referral")],
-        [btn("🔙 В меню", "main_menu")],
+        [btn("� Мониторинг панелей", "monitor_menu")],
+        [btn("�🔙 В меню", "main_menu")],
     ]
     
     return text, InlineKeyboardMarkup(keyboard)
@@ -369,6 +422,172 @@ def build_user_detail(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         [btn("🔨 Забанить", f"ban_{user_id}"), btn("🔓 Разбанить", f"unban_{user_id}")],
         [btn("➕ Админ", f"makeadmin_{user_id}"), btn("➖ Убрать админа", f"removeadmin_{user_id}")],
         [back_btn("admin_panel")],
+    ]
+    
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+# ===== MONITORING =====
+def build_monitor_menu(panel_statuses: list) -> tuple[str, InlineKeyboardMarkup]:
+    """Build monitoring dashboard menu."""
+    text = (
+        "📊 <b>Мониторинг панелей</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    
+    if not panel_statuses:
+        text += "📭 Панелей не настроено в X-Controller"
+    else:
+        for item in panel_statuses:
+            panel = item["panel"]
+            health = item["health"]
+            
+            name = panel.get("name", "Unknown")
+            host = panel.get("host", "unknown")
+            priority = panel.get("priority", 0)
+            max_clients = panel.get("max_clients", 0)
+            
+            status = health.get("status", "unknown")
+            latency = health.get("latency_ms")
+            error = health.get("error")
+            
+            # Status emoji
+            if status == "healthy":
+                emoji = "🟢"
+            elif status == "degraded":
+                emoji = "🟡"
+            elif status == "unhealthy":
+                emoji = "🔴"
+            else:
+                emoji = "⚪"
+            
+            text += f"{emoji} <b>{name}</b>\n"
+            text += f"   🌐 <code>{host}</code> | Приоритет: {priority} | Макс. клиентов: {max_clients}\n"
+            
+            if latency is not None:
+                text += f"   ⏱ Задержка: <b>{latency} мс</b>\n"
+            
+            if error:
+                text += f"   ❌ <i>{error}</i>\n"
+            
+            text += "\n"
+    
+    text += f"🕐 <i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>"
+    
+    keyboard = []
+    for item in panel_statuses:
+        panel = item["panel"]
+        panel_id = panel.get("id")
+        name = panel.get("name", "Unknown")
+        if panel_id:
+            keyboard.append([btn(f"📋 {name}", f"monitor_detail_{panel_id}")])
+    
+    keyboard.append([btn("🔄 Обновить", "monitor_refresh")])
+    keyboard.append([back_btn("admin_panel")])
+    
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_monitor_detail(panel: dict, health: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """Build detailed panel view."""
+    name = panel.get("name", "Unknown")
+    host = panel.get("host", "unknown")
+    panel_path = panel.get("panel_path", "")
+    sub_path = panel.get("sub_path", "/sub")
+    username = panel.get("username", "admin")
+    priority = panel.get("priority", 0)
+    max_clients = panel.get("max_clients", 0)
+    panel_id = panel.get("id")
+    
+    status = health.get("status", "unknown")
+    latency = health.get("latency_ms")
+    error = health.get("error")
+    last_checked = health.get("last_checked")
+    
+    # Status emoji and text
+    if status == "healthy":
+        status_emoji = "🟢"
+        status_text = "Здорова"
+    elif status == "degraded":
+        status_emoji = "🟡"
+        status_text = "Деградирована"
+    elif status == "unhealthy":
+        status_emoji = "🔴"
+        status_text = "Недоступна"
+    else:
+        status_emoji = "⚪"
+        status_text = "Неизвестно"
+    
+    text = (
+        f"{status_emoji} <b>Панель: {name}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🌐 <b>Хост:</b> <code>{host}</code>\n"
+    )
+    
+    if panel_path:
+        text += f"📁 <b>Путь панели:</b> <code>{panel_path}</code>\n"
+    text += f"🔗 <b>Путь подписки:</b> <code>{sub_path}</code>\n"
+    text += f"👤 <b>Пользователь:</b> <code>{username}</code>\n"
+    text += f"⭐ <b>Приоритет:</b> {priority}\n"
+    text += f"👥 <b>Макс. клиентов:</b> {max_clients}\n\n"
+    
+    text += f"📊 <b>Статус:</b> {status_text} ({status})\n"
+    
+    if latency is not None:
+        text += f"⏱ <b>Задержка:</b> {latency} мс\n"
+    
+    if last_checked:
+        text += f"🕐 <b>Последняя проверка:</b> {last_checked}\n"
+    
+    if error:
+        text += f"\n❌ <b>Ошибка:</b>\n<code>{error}</code>\n"
+    
+    keyboard = [
+        [btn("🔄 Проверить сейчас", f"monitor_check_{panel_id}")],
+        [back_btn("monitor_menu")],
+    ]
+    
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_user_node_status(panel_statuses: list) -> tuple[str, InlineKeyboardMarkup]:
+    """Build simplified node status view for regular users."""
+    text = (
+        "📡 <b>Статус серверов</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    
+    if not panel_statuses:
+        text += "📭 Серверов не настроено"
+    else:
+        for item in panel_statuses:
+            panel = item["panel"]
+            health = item["health"]
+            
+            name = panel.get("name", "Unknown")
+            status = health.get("status", "unknown")
+            latency = health.get("latency_ms")
+            
+            # Status emoji
+            if status == "healthy":
+                emoji = "🟢"
+            elif status == "degraded":
+                emoji = "🟡"
+            elif status == "unhealthy":
+                emoji = "🔴"
+            else:
+                emoji = "⚪"
+            
+            text += f"{emoji} <b>{name}</b>"
+            if latency is not None:
+                text += f" | ⏱ {latency} мс"
+            text += "\n"
+    
+    text += f"\n🕐 <i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>"
+    
+    keyboard = [
+        [btn("🔄 Обновить", "user_monitor_refresh")],
+        [btn("🏠 Главное меню", "main_menu")]
     ]
     
     return text, InlineKeyboardMarkup(keyboard)
