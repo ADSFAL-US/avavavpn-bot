@@ -534,7 +534,9 @@ class SubscriptionManager:
                 try:
                     clean = ends_at_str.split("+")[0]
                     new_end = datetime.fromisoformat(clean)
-                    total_expiry_days = max(1, (new_end - datetime.now()).days)
+                    # Calculate total days from now to NEW expiry (old expiry + extra_days)
+                    remaining_days = max(1, (new_end - datetime.now()).days)
+                    total_expiry_days = remaining_days + extra_days
                 except (ValueError, TypeError):
                     total_expiry_days = extra_days
             else:
