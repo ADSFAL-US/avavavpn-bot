@@ -48,6 +48,11 @@ from handlers.admin import (
     handle_admin_simulate_referral, handle_admin_find,
     handle_ban, handle_unban, handle_makeadmin, handle_removeadmin,
 )
+from handlers.monitoring import (
+    handle_monitor_menu, handle_monitor_refresh, handle_monitor_detail,
+    check_all_panels_and_alert,
+    handle_user_monitor_menu, handle_user_monitor_refresh,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -503,6 +508,34 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await handle_removeadmin(update, context, user_id, data[12:])
 
+    # ===== MONITORING =====
+    elif data == "monitor_menu":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_monitor_menu(update, context, user_id)
+    elif data == "monitor_refresh":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_monitor_refresh(update, context, user_id)
+    elif data.startswith("monitor_detail_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_monitor_detail(update, context, user_id, data[15:])
+    elif data.startswith("monitor_check_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        # Reuse detail handler for check action
+        await handle_monitor_detail(update, context, user_id, data[14:])
+    # ===== USER NODE STATUS =====
+    elif data == "user_node_status":
+        await handle_user_monitor_menu(update, context, user_id)
+    elif data == "user_monitor_refresh":
+        await handle_user_monitor_refresh(update, context, user_id)
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log errors."""
     logger.error("Exception while handling update:", exc_info=context.error)
@@ -522,6 +555,25 @@ def main():
     
     # Errors
     app.add_error_handler(error_handler)
+    
+    # Background monitoring job
+    if config.MONITOR_INTERVAL_SECONDS > 0:
+        app.job_queue.run_repeating(
+            check_all_panels_and_alert,
+            interval=config.MONITOR_INTERVAL_SECONDS,
+            first=10,  # Start after 10 seconds
+            name="panel_monitoring"
+        )
+        logger.info(f"📊 Panel monitoring job scheduled every {config.MONITOR_INTERVAL_SECONDS}s")
+    
+    # Run migration to populate missing panel_subscription_id
+    if app_context.subscription_manager and app_context.xcontroller:
+        try:
+            logger.info("Running migration: populate missing panel_subscription_id...")
+            result = db.populate_missing_panel_subscription_ids(app_context.xcontroller)
+            logger.info(f"Migration result: {result}")
+        except Exception as e:
+            logger.error(f"Migration failed: {e}")
     
     logger.info("🚀 Bot started with new UI")
     app.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -12,7 +12,9 @@ from utils import (
 from keyboards import (
     build_main_menu, build_tariffs_menu, build_tariff_detail,
     build_subscription_view, build_referral_menu, build_use_days_menu,
+    build_user_node_status,
 )
+from handlers.monitoring import _get_panel_statuses
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,10 @@ async def handle_get_link(update: Update, context: ContextTypes.DEFAULT_TYPE, us
             await query.edit_message_text("❌ Подписка не найдена")
             return
 
+        if not app_context.subscription_manager:
+            await query.edit_message_text("❌ Сервис подписок недоступен")
+            return
+
         link = app_context.subscription_manager.get_user_subscription_link(user_id)
         if link:
             text = (
@@ -116,14 +122,17 @@ async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, user
     try:
         sid = int(sub_id)
         if app_context.subscription_manager:
-            success = app_context.subscription_manager.cancel_subscription(sid)
+            result = app_context.subscription_manager.cancel_subscription(sid)
+            success = result.get("success", False)
+            if not success and result.get("manual_action_required"):
+                text = "⚠️ Подписка не была отменена полностью. Обратитесь в поддержку."
+            elif not success:
+                text = "❌ Не удалось отменить"
+            else:
+                text = "✅ Подписка отменена"
         else:
             success = db.cancel_subscription(sid, user_id)
-
-        if success:
-            text = "✅ Подписка отменена"
-        else:
-            text = "❌ Не удалось отменить"
+            text = "✅ Подписка отменена" if success else "❌ Не удалось отменить"
     except ValueError:
         text = "❌ Ошибка ID подписки"
 
@@ -140,7 +149,7 @@ async def handle_use_days_apply(update: Update, context: ContextTypes.DEFAULT_TY
             await query.edit_message_text("❌ Подписка не найдена")
             return
 
-        user_info = db.get_user_by_id(user_id)
+        user_info = db.get_user_by_id(user_id) or {}
         days_available = int(user_info.get("referral_days", 0))
         if not user_info or days_available <= 0:
             await query.edit_message_text("❌ У вас нет дней для использования")
@@ -160,6 +169,8 @@ async def handle_use_days_apply(update: Update, context: ContextTypes.DEFAULT_TY
         result = app_context.subscription_manager.extend_subscription(sid, days_to_add)
         if not result.get("success"):
             logger.warning(f"Referral days extension sync failed: {result.get('error')}")
+            if result.get("manual_action_required"):
+                logger.warning("Extension requires manual follow-up")
 
         # Reset referral days
         cursor = db.conn.cursor()
@@ -189,3 +200,20 @@ async def handle_use_days_apply(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         logger.error(f"Error using referral days: {e}")
         await query.edit_message_text("❌ Ошибка при использовании дней")
+
+
+async def handle_user_node_status(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Show simple node status for regular users."""
+    query = update.callback_query
+
+    if not app_context.xcontroller:
+        await query.answer("❌ Мониторинг не настроен", show_alert=True)
+        return
+
+    await query.answer("🔄 Обновление...")
+
+    # Use cached panel statuses (shared with admin monitoring)
+    panel_statuses = _get_panel_statuses()
+
+    text, markup = build_user_node_status(panel_statuses)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)

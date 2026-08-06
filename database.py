@@ -65,9 +65,11 @@ class Database:
 
     def _connect(self):
         """Connect to the database."""
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.conn.execute("PRAGMA busy_timeout = 30000")
 
     def _create_tables(self):
         """Create all required tables."""
@@ -292,6 +294,12 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (user_id,))
         self.conn.commit()
+
+    def get_admin_ids(self):
+        """Get all admin user IDs."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT user_id FROM users WHERE is_admin = 1")
+        return [row["user_id"] for row in cursor.fetchall()]
 
     def get_active_subscription(self, user_id):
         """Get the active subscription for a user."""
@@ -637,6 +645,86 @@ class Database:
         """Close database connection."""
         if self.conn:
             self.conn.close()
+            self.conn = None
+
+
+    def populate_missing_panel_subscription_ids(self, xcontroller_client):
+        """
+        Populate missing panel_subscription_id for existing subscriptions.
+        
+        Queries X-Controller for subscriptions matching user emails and updates local DB.
+        
+        Args:
+            xcontroller_client: Instance of XControllerClient
+            
+        Returns:
+            Dict with stats: updated_count, failed_count, errors
+        """
+        cursor = self.conn.cursor()
+        
+        # Find subscriptions with missing panel_subscription_id but with panel_sub_token
+        cursor.execute("""
+            SELECT id, user_id, panel_sub_token, tariff_id 
+            FROM subscriptions 
+            WHERE panel_subscription_id IS NULL 
+            AND panel_sub_token IS NOT NULL
+            AND status = 'active'
+        """)
+        subs_to_update = cursor.fetchall()
+        
+        if not subs_to_update:
+            logger.info("No subscriptions missing panel_subscription_id")
+            return {"updated_count": 0, "failed_count": 0, "errors": []}
+        
+        logger.info(f"Found {len(subs_to_update)} subscriptions missing panel_subscription_id")
+        
+        # Get all subscriptions from X-Controller
+        try:
+            xc_result = xcontroller_client.list_subscriptions()
+            xc_subs = xc_result if isinstance(xc_result, list) else xc_result.get("subscriptions", [])
+            
+            # Build lookup by sub_token
+            xc_by_token = {sub.get("sub_token"): sub for sub in xc_subs if sub.get("sub_token")}
+            
+            updated = 0
+            failed = 0
+            errors = []
+            
+            for sub in subs_to_update:
+                sub_id = sub["id"]
+                token = sub["panel_sub_token"]
+                
+                xc_sub = xc_by_token.get(token)
+                if xc_sub and xc_sub.get("id"):
+                    try:
+                        cursor.execute(
+                            "UPDATE subscriptions SET panel_subscription_id = ? WHERE id = ?",
+                            (xc_sub["id"], sub_id)
+                        )
+                        updated += 1
+                        logger.info(f"Updated subscription {sub_id} with panel_subscription_id={xc_sub['id']}")
+                    except Exception as e:
+                        failed += 1
+                        errors.append(f"sub_id={sub_id}: {e}")
+                        logger.error(f"Failed to update subscription {sub_id}: {e}")
+                else:
+                    failed += 1
+                    errors.append(f"sub_id={sub_id}: not found in X-Controller (token={token})")
+                    logger.warning(f"Subscription {sub_id} (token={token}) not found in X-Controller")
+            
+            self.conn.commit()
+            
+            result = {
+                "updated_count": updated,
+                "failed_count": failed,
+                "errors": errors
+            }
+            logger.info(f"Populate panel_subscription_id complete: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch subscriptions from X-Controller: {e}")
+            return {"updated_count": 0, "failed_count": len(subs_to_update), "errors": [str(e)]}
 
 
 # Global database instance

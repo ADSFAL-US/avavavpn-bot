@@ -302,6 +302,7 @@ class PaymentStorage:
                 payment_id TEXT,
                 amount REAL NOT NULL,
                 status TEXT DEFAULT 'pending',
+                refund_id TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 metadata TEXT,
@@ -353,16 +354,29 @@ class PaymentStorage:
         order_id: str,
         status: str,
         payment_id: Optional[str] = None,
+        refund_id: Optional[str] = None,
     ) -> bool:
         """Update payment status."""
         try:
             cursor = self.db.cursor()
-            if payment_id:
+            if payment_id and refund_id:
+                cursor.execute("""
+                    UPDATE payments 
+                    SET status = ?, payment_id = ?, refund_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE order_id = ?
+                """, (status, payment_id, refund_id, order_id))
+            elif payment_id:
                 cursor.execute("""
                     UPDATE payments 
                     SET status = ?, payment_id = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE order_id = ?
                 """, (status, payment_id, order_id))
+            elif refund_id:
+                cursor.execute("""
+                    UPDATE payments 
+                    SET status = ?, refund_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE order_id = ?
+                """, (status, refund_id, order_id))
             else:
                 cursor.execute("""
                     UPDATE payments 

@@ -29,9 +29,18 @@ async def handle_free_subscription(update: Update, user_id: int, tariff_id: str,
         if not result.get("success"):
             error = result.get("error", "Unknown error")
             logger.error(f"Free subscription creation failed: {error}")
-            await query.edit_message_text(
-                f"❌ <b>Ошибка активации</b>\n\n{error}"
-            )
+            if result.get("manual_action_required"):
+                await query.edit_message_text(
+                    f"⚠️ <b>Подписка не активирована полностью</b>\n\n"
+                    f"{error}\n\n"
+                    f"Пожалуйста, обратитесь в поддержку, если проблема повторится.",
+                    parse_mode="HTML"
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ <b>Ошибка активации</b>\n\n{error}",
+                    parse_mode="HTML"
+                )
             return
         
         sub_link = result.get("sub_link", "N/A")
@@ -83,12 +92,20 @@ async def create_paid_subscription(update: Update, user_id: int, tariff_id: str,
         if not result.get("success"):
             error = result.get("error", "Unknown error")
             logger.error(f"Paid subscription creation failed: {error}")
-            await query.edit_message_text(
-                f"❌ <b>Ошибка активации подписки</b>\n\n"
-                f"{error}\n\n"
-                f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
-                parse_mode="HTML"
-            )
+            if result.get("manual_action_required"):
+                await query.edit_message_text(
+                    f"⚠️ <b>Подписка не активирована полностью</b>\n\n"
+                    f"{error}\n\n"
+                    f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
+                    parse_mode="HTML"
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ <b>Ошибка активации подписки</b>\n\n"
+                    f"{error}\n\n"
+                    f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
+                    parse_mode="HTML"
+                )
             return
         
         sub_link = result.get("sub_link", "N/A")
@@ -131,9 +148,18 @@ async def handle_tariff_change(update: Update, user_id: int, sub_id: int, new_ta
         if not result.get("success"):
             error = result.get("error", "Unknown error")
             logger.error(f"Tariff change failed: {error}")
-            await query.edit_message_text(
-                f"❌ <b>Ошибка смены тарифа</b>\n\n{error}"
-            )
+            if result.get("manual_action_required"):
+                await query.edit_message_text(
+                    f"⚠️ <b>Смена тарифа не завершена</b>\n\n"
+                    f"{error}\n\n"
+                    f"Если проблема повторится — обратитесь в поддержку.",
+                    parse_mode="HTML"
+                )
+            else:
+                await query.edit_message_text(
+                    f"❌ <b>Ошибка смены тарифа</b>\n\n{error}",
+                    parse_mode="HTML"
+                )
             return
         
         sub_link = result.get("sub_link", "N/A")

@@ -4,6 +4,12 @@ import logging
 from typing import Optional, Dict, Any, List
 import config
 
+
+try:
+    from subscription_service import SubscriptionService
+except Exception:  # pragma: no cover - fallback for import order
+    SubscriptionService = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -107,6 +113,8 @@ class XControllerClient:
         except requests.exceptions.ConnectionError as e:
             logger.error(f"X-Controller connection error: {e}")
             raise XControllerAPIError(f"Cannot connect to X-Controller: {e}")
+        except XControllerAuthError:
+            raise
         except requests.exceptions.HTTPError as e:
             status_code = e.response.status_code
             try:
@@ -236,6 +244,95 @@ class XControllerClient:
         except Exception as e:
             return {"status": "unhealthy", "error": str(e)}
     
+    # ============ Panels API (Monitoring) ============
+    
+    def get_panels(self) -> List[Dict[str, Any]]:
+        """
+        Get all panels from X-Controller.
+        
+        Returns:
+            List of panel dicts with: id, name, host, priority, max_clients, status, last_checked
+        """
+        try:
+            result = self._make_request("GET", "/api/panels")
+            return result.get("panels", [])
+        except Exception as e:
+            logger.error(f"Failed to get panels: {e}")
+            return []
+    
+    def get_panel_details(self, panel_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information about a specific panel.
+        
+        Args:
+            panel_id: Panel ID
+            
+        Returns:
+            Panel dict with full details or None if not found
+        """
+        try:
+            result = self._make_request("GET", f"/api/panels/{panel_id}")
+            return result.get("panel")
+        except XControllerAPIError as e:
+            if e.status_code == 404:
+                return None
+            logger.error(f"Failed to get panel {panel_id}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get panel {panel_id}: {e}")
+            return None
+    
+    def check_panel_health(self, panel_id: int) -> Dict[str, Any]:
+        """
+        Check health of a specific panel.
+        
+        Args:
+            panel_id: Panel ID
+            
+        Returns:
+            Health check result with status, latency, error if any
+        """
+        try:
+            return self._make_request("GET", f"/api/panels/{panel_id}/health")
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e), "panel_id": panel_id}
+    
+    def get_whitelist_bypass_traffic(self, panel_subscription_id: int) -> Dict[str, Any]:
+        """
+        Get whitelist bypass traffic for a subscription.
+        
+        Args:
+            panel_subscription_id: Subscription ID in the panel (X-Controller)
+            
+        Returns:
+            Dict with used_gb, limit_gb, remaining_gb, configs_count, is_exhausted
+        """
+        try:
+            result = self._make_request("GET", f"/api/subscriptions/{panel_subscription_id}/whitelist-traffic")
+            return result
+        except XControllerAPIError as e:
+            logger.error(f"Failed to get whitelist bypass traffic: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "used_gb": 0,
+                "limit_gb": 50,
+                "remaining_gb": 50,
+                "configs_count": 0,
+                "is_exhausted": False
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error getting whitelist bypass traffic: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "used_gb": 0,
+                "limit_gb": 50,
+                "remaining_gb": 50,
+                "configs_count": 0,
+                "is_exhausted": False
+            }
+    
     # ============ Helper Methods ============
     
     def get_subscription_link(self, sub_token: str) -> str:
@@ -299,6 +396,7 @@ class SubscriptionManager:
     def __init__(self, db, xcontroller: Optional[XControllerClient] = None):
         self.db = db
         self.xc = xcontroller or XControllerClient()
+        self.service = SubscriptionService(self.db, self.xc) if SubscriptionService is not None else None
     
     def create_subscription(
         self,
@@ -321,6 +419,15 @@ class SubscriptionManager:
         Returns:
             Dict with success status, subscription data, and VPN link
         """
+        if self.service is not None:
+            return self.service.create_subscription(
+                user_id=user_id,
+                tariff_id=tariff_id,
+                payment_id=payment_id,
+                preset_id=preset_id,
+                expiry_days=expiry_days,
+            )
+
         from database import TARIFFS
         
         tariff = TARIFFS.get(tariff_id)
@@ -328,10 +435,7 @@ class SubscriptionManager:
             return {"success": False, "error": "Invalid tariff"}
         
         try:
-            # Determine effective duration
             effective_days = expiry_days if expiry_days is not None else tariff.get("duration_days", 30)
-            
-            # 1. Create in X-Controller
             xc_result = self.xc.create_user_subscription(
                 telegram_user_id=user_id,
                 tariff=tariff,
@@ -345,8 +449,6 @@ class SubscriptionManager:
                 return {"success": False, "error": f"Panel error: {error}"}
             
             sub_data = xc_result.get("subscription", {})
-            
-            # 2. Save to local DB
             ends_at = None
             if effective_days:
                 from datetime import datetime, timedelta
@@ -365,7 +467,6 @@ class SubscriptionManager:
                 payment_id=payment_id,
             )
             
-            # 3. Generate subscription link
             sub_link = self.xc.get_subscription_link(sub_data.get("sub_token", ""))
             
             logger.info(
@@ -389,6 +490,9 @@ class SubscriptionManager:
     
     def get_user_subscription_link(self, user_id: int) -> Optional[str]:
         """Get subscription link for user."""
+        if self.service is not None:
+            return self.service.get_user_subscription_link(user_id)
+
         sub = self.db.get_active_subscription(user_id)
         if not sub:
             return None
@@ -411,26 +515,25 @@ class SubscriptionManager:
         Returns:
             Dict with success status, new ends_at and sub_link
         """
+        if self.service is not None:
+            return self.service.extend_subscription(subscription_id, extra_days)
+
         sub = self.db.get_subscription_by_id(subscription_id)
         if not sub:
             return {"success": False, "error": "Subscription not found"}
 
-        # 1. Extend in local DB (this also recalculates ends_at)
         self.db.extend_subscription(subscription_id, extra_days)
 
-        # 2. Refresh sub to get updated ends_at and calculate total expiry_days
         updated_sub = self.db.get_subscription_by_id(subscription_id)
         panel_id = updated_sub.get("panel_subscription_id")
 
         if panel_id:
-            # Calculate total expiry days from creation or from now + extra
             from datetime import datetime
             ends_at_str = updated_sub.get("ends_at")
             if ends_at_str:
                 try:
                     clean = ends_at_str.split("+")[0]
                     new_end = datetime.fromisoformat(clean)
-                    # Calculate how many days from now to new end
                     total_expiry_days = max(1, (new_end - datetime.now()).days)
                 except (ValueError, TypeError):
                     total_expiry_days = extra_days
@@ -438,7 +541,6 @@ class SubscriptionManager:
                 total_expiry_days = extra_days
 
             try:
-                # 3. Update expiry on x-controller → triggers sync to panels
                 self.xc.update_subscription(
                     subscription_id=panel_id,
                     expiry_days=total_expiry_days,
@@ -449,9 +551,13 @@ class SubscriptionManager:
                 )
             except Exception as e:
                 logger.error(f"Failed to update x-controller for extension: {e}")
-                # Don't fail — local DB is updated, panel sync will catch up
+                return {
+                    "success": False,
+                    "error": f"Failed to sync with panel: {e}",
+                    "subscription_id": subscription_id,
+                    "local_db_updated": True,
+                }
 
-        # 4. Build subscription link
         sub_token = updated_sub.get("panel_sub_token")
         sub_link = self.xc.get_subscription_link(sub_token) if sub_token else None
 
@@ -465,6 +571,9 @@ class SubscriptionManager:
 
     def cancel_subscription(self, subscription_id: int) -> bool:
         """Cancel subscription in both panel and local DB."""
+        if self.service is not None:
+            return self.service.cancel_subscription(subscription_id).get("success", False)
+
         try:
             sub = self.db.get_subscription_by_id(subscription_id)
             if not sub:
@@ -509,9 +618,11 @@ class SubscriptionManager:
         Returns:
             Dict with success status and new subscription data
         """
+        if self.service is not None:
+            return self.service.change_subscription(subscription_id, new_tariff_id, expiry_days)
+
         from database import TARIFFS
         
-        # Get current subscription
         current_sub = self.db.get_subscription_by_id(subscription_id)
         if not current_sub:
             return {"success": False, "error": "Current subscription not found"}
@@ -522,16 +633,12 @@ class SubscriptionManager:
             return {"success": False, "error": "Invalid tariff"}
         
         try:
-            # Determine effective duration
             effective_days = expiry_days if expiry_days is not None else new_tariff.get("duration_days", 30)
-            
-            # 1. Cancel old subscription in panel
             old_panel_id = current_sub.get("panel_subscription_id")
             if old_panel_id:
                 self.xc.delete_subscription(old_panel_id)
                 logger.info(f"Deleted old panel subscription: {old_panel_id}")
             
-            # 2. Create new subscription in panel
             xc_result = self.xc.create_user_subscription(
                 telegram_user_id=user_id,
                 tariff=new_tariff,
@@ -545,14 +652,11 @@ class SubscriptionManager:
                 return {"success": False, "error": f"Panel error: {error}"}
             
             new_sub_data = xc_result.get("subscription", {})
-            
-            # 3. Update existing DB record with new tariff and panel data
             ends_at = None
             if effective_days:
                 from datetime import datetime, timedelta
                 ends_at = datetime.now() + timedelta(days=effective_days)
             
-            # Update the existing subscription record
             self.db.conn.execute(
                 """UPDATE subscriptions SET 
                    tariff_id = ?, ends_at = ?, speed_mbps = ?, 
@@ -573,7 +677,6 @@ class SubscriptionManager:
             )
             self.db.conn.commit()
             
-            # 4. Generate new subscription link
             sub_link = self.xc.get_subscription_link(new_sub_data.get("sub_token", ""))
             
             logger.info(

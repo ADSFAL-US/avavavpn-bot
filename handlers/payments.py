@@ -73,6 +73,26 @@ async def handle_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, u
         )
         return
 
+    try:
+        panel_health = app_context.subscription_manager.xc.health_check()
+        if not panel_health or str(panel_health.get("status", "")).lower() != "healthy":
+            logger.warning("Blocking payment because panel is unavailable: %s", panel_health)
+            await query.edit_message_text(
+                "⚠️ <b>Подписочная панель временно недоступна</b>\n\n"
+                "Оплата сейчас не может быть завершена, потому что сервис подписок не отвечает."
+                "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+                parse_mode="HTML"
+            )
+            return
+    except Exception as exc:
+        logger.warning("Could not check panel health before payment: %s", exc)
+        await query.edit_message_text(
+            "⚠️ <b>Подписочная панель временно недоступна</b>\n\n"
+            "Оплата сейчас не может быть завершена. Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+            parse_mode="HTML"
+        )
+        return
+
     amount = tariff.get("price", 0)
 
     # Apply 10% discount for new referred users (only for paid tariffs)
@@ -145,11 +165,19 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # Check if already processed
-    if payment_record.get("status") == "completed":
+    status_flag = payment_record.get("status")
+    if status_flag == "completed":
         await query.edit_message_text(
             "✅ <b>Платеж уже обработан</b>\n\n"
             "Ваша подписка активна."
         )
+        return
+
+    if status_flag == "refunded":
+        await query.edit_message_text(
+            "ℹ️ <b>Платеж уже возвращен</b>\n\n"
+            "Средства по этому заказу уже были возвращены."
+        , parse_mode="HTML")
         return
 
     # Check payment ID
@@ -159,6 +187,32 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # ─── Success processing (extend or new sub) ────────────────────
+    async def _refund_payment_and_notify(error_message: str):
+        """Refund payment and notify the user if activation fails."""
+        refund_result = app_context.yookassa.create_refund(
+            payment_id,
+            amount=payment_record.get("amount"),
+            description=error_message,
+        )
+
+        if refund_result.get("error"):
+            logger.error(f"Refund failed for payment {payment_id}: {refund_result['error']}")
+            await query.edit_message_text(
+                "❌ <b>Ошибка возврата средств</b>\n\n"
+                "Произошла ошибка при оформлении подписки и возврате платежа. Обратитесь в поддержку.",
+                parse_mode="HTML"
+            )
+            return False
+
+        refund_id = refund_result.get("refund_id")
+        app_context.payment_storage.update_payment_status(order_id, "refunded", payment_id, refund_id)
+        await query.edit_message_text(
+            "❌ <b>Произошла ошибка, мы вернули средства на счет</b>\n\n"
+            "Пожалуйста, обратитесь в поддержку, если проблема повторится.",
+            parse_mode="HTML"
+        )
+        return True
+
     async def _process_successful_payment():
         """Handle payment success — common for both succeeded and force-captured flows."""
         app_context.payment_storage.update_payment_status(order_id, "completed", payment_id)
@@ -174,8 +228,33 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
                 extra_days = tariff["duration_days"] if tariff else 30
 
                 result = app_context.subscription_manager.extend_subscription(old_sub_id, extra_days)
+                
                 if not result.get("success"):
-                    logger.error(f"Extension failed: {result.get('error')}")
+                    error_msg = result.get('error', 'Unknown error')
+                    logger.error(f"Extension failed: {error_msg}")
+                    
+                    if result.get("local_db_updated"):
+                        sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
+                        text = (
+                            f"⚠️ <b>Подписка продлена локально, но синхронизация с панелью не удалась</b>\n\n"
+                            f"📌 {tariff['name'] if tariff else '—'}\n"
+                            f"⏱ +{extra_days} дней\n\n"
+                            f"🔗 <b>Ваша ссылка для подключения:</b>\n"
+                            f"<code>{sub_link}</code>\n\n"
+                            f"❗ <i>Панель будет обработана позднее, но уже сейчас подписка сохранена локально.</i>\n"
+                            f"<i>Если проблема повторится — обратитесь в поддержку.</i>"
+                        )
+                    else:
+                        text = "❌ <b>Ошибка продления подписки</b>\n\nОбратитесь в поддержку."
+                        sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("📋 Инструкция по настройке", url=sub_link)] if sub_link and sub_link != "N/A" else [],
+                        [btn("📊 Моя подписка", "menu_subscription"), back_btn()]
+                    ]
+                    await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+                    await _refund_payment_and_notify(error_msg)
+                    return
 
                 sub_link = result.get("sub_link") or app_context.subscription_manager.get_user_subscription_link(user_id) or "N/A"
 
@@ -206,7 +285,11 @@ async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.edit_message_text("❌ Тариф не найден")
             return
 
-        await create_paid_subscription(update, user_id, tariff_id, tariff, payment_id)
+        result = await create_paid_subscription(update, user_id, tariff_id, tariff, payment_id)
+        if result is False or (isinstance(result, dict) and not result.get("success", True)):
+            await _refund_payment_and_notify(result.get("error") if isinstance(result, dict) else "Subscription activation failed")
+            return
+
         db.reward_referrer(user_id, tariff_id)
 
     check_result = app_context.yookassa.check_payment(payment_id)
@@ -422,11 +505,19 @@ async def handle_check_change_payment(update: Update, context: ContextTypes.DEFA
         await query.edit_message_text("❌ Платеж не найден")
         return
 
-    if payment_record.get("status") == "completed":
+    status_flag = payment_record.get("status")
+    if status_flag == "completed":
         await query.edit_message_text(
             "✅ <b>Платеж уже обработан</b>\n\n"
             "Тариф изменен."
         )
+        return
+
+    if status_flag == "refunded":
+        await query.edit_message_text(
+            "ℹ️ <b>Платеж уже возвращен</b>\n\n"
+            "Средства по этому заказу уже были возвращены."
+        , parse_mode="HTML")
         return
 
     payment_id = payment_record.get("payment_id")
