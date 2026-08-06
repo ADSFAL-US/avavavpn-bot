@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 os.environ.setdefault("DATABASE_PATH", tempfile.gettempdir() + "/avava_vpn_test.db")
 
@@ -141,6 +141,169 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
             await payments_handlers.handle_check_change_payment(update, context, 42, "bad_order")
 
         self.assertIn("Ошибка данных заказа", update.callback_query.edited_messages[0]["text"])
+
+    async def test_handle_check_payment_refunds_when_subscription_activation_fails(self):
+        update = DummyUpdate()
+        context = SimpleNamespace(user_data={})
+        payment_record = {
+            "order_id": "order_1",
+            "payment_id": "pay_1",
+            "status": "pending",
+            "tariff_id": "premium",
+            "amount": 199,
+            "user_id": 42,
+        }
+        update_calls = []
+        def update_payment_status(order_id, status, payment_id=None, refund_id=None):
+            update_calls.append((order_id, status, payment_id, refund_id))
+            return True
+
+        storage = SimpleNamespace(
+            get_payment_by_order=lambda order_id: payment_record,
+            update_payment_status=update_payment_status,
+            create_payment_record=lambda *args, **kwargs: None,
+        )
+
+        yookassa_client = SimpleNamespace(
+            check_payment=lambda payment_id: {"status": "succeeded", "paid": True},
+            capture_payment=lambda payment_id: {"success": True, "status": "succeeded"},
+            create_refund=Mock(return_value={"success": True, "refund_id": "refund_1", "status": "succeeded"}),
+        )
+
+        create_paid = AsyncMock(return_value={"success": False, "error": "panel failure"})
+        reward_referrer = Mock()
+
+        with patch.object(payments_handlers.app_context, "payment_storage", storage), \
+             patch.object(payments_handlers.app_context, "yookassa", yookassa_client), \
+             patch.object(payments_handlers, "create_paid_subscription", create_paid), \
+             patch.object(payments_handlers.db, "reward_referrer", reward_referrer, create=True), \
+             patch.dict(payments_handlers.TARIFFS, {
+                 "premium": {"id": "premium", "name": "Premium", "price": 199, "currency": "рублей", "duration_days": 30, "speed": "50 Мбит/с", "warp": False, "test_configs": False}
+             }):
+            await payments_handlers.handle_check_payment(update, context, 42, "order_1")
+
+        self.assertTrue(yookassa_client.create_refund.called)
+        self.assertEqual(yookassa_client.create_refund.call_args.args[0], "pay_1")
+        self.assertEqual(update_calls[-1], ("order_1", "refunded", "pay_1", "refund_1"))
+        self.assertFalse(reward_referrer.called)
+        self.assertIn("вернули средства", update.callback_query.edited_messages[-1]["text"])
+
+    async def test_handle_check_payment_refunds_when_extension_fails(self):
+        update = DummyUpdate()
+        context = SimpleNamespace(user_data={})
+        payment_record = {
+            "order_id": "extend_1_abcd1234",
+            "payment_id": "pay_2",
+            "status": "pending",
+            "tariff_id": "premium",
+            "amount": 199,
+            "user_id": 42,
+        }
+        update_calls = []
+        def update_payment_status(order_id, status, payment_id=None, refund_id=None):
+            update_calls.append((order_id, status, payment_id, refund_id))
+            return True
+
+        storage = SimpleNamespace(
+            get_payment_by_order=lambda order_id: payment_record,
+            update_payment_status=update_payment_status,
+            create_payment_record=lambda *args, **kwargs: None,
+        )
+
+        create_refund = Mock(return_value={"success": True, "refund_id": "refund_2", "status": "succeeded"})
+        yookassa_client = SimpleNamespace(
+            check_payment=lambda payment_id: {"status": "succeeded", "paid": True},
+            capture_payment=lambda payment_id: {"success": True, "status": "succeeded"},
+            create_refund=create_refund,
+        )
+
+        app_subscription_manager = SimpleNamespace(
+            extend_subscription=lambda subscription_id, extra_days: {"success": False, "error": "sync failed", "local_db_updated": True},
+            get_user_subscription_link=lambda user_id: "https://example.com/link"
+        )
+
+        fake_db = SimpleNamespace(reward_referrer=Mock())
+
+        with patch.object(payments_handlers.app_context, "payment_storage", storage), \
+             patch.object(payments_handlers.app_context, "yookassa", yookassa_client), \
+             patch.object(payments_handlers.app_context, "subscription_manager", app_subscription_manager), \
+             patch.object(payments_handlers.db, "reward_referrer", fake_db.reward_referrer, create=True), \
+             patch.dict(payments_handlers.TARIFFS, {
+                 "premium": {"id": "premium", "name": "Premium", "price": 199, "currency": "рублей", "duration_days": 30, "speed": "50 Мбит/с", "warp": False, "test_configs": False}
+             }):
+            await payments_handlers.handle_check_payment(update, context, 42, "extend_1_abcd1234")
+
+        self.assertTrue(yookassa_client.create_refund.called)
+        self.assertEqual(update_calls[-1], ("extend_1_abcd1234", "refunded", "pay_2", "refund_2"))
+        self.assertIn("вернули средства", update.callback_query.edited_messages[-1]["text"])
+
+    async def test_handle_check_payment_does_not_refund_twice_for_refunded_payment(self):
+        update = DummyUpdate()
+        context = SimpleNamespace(user_data={})
+        payment_record = {
+            "order_id": "order_1",
+            "payment_id": "pay_1",
+            "status": "refunded",
+            "tariff_id": "premium",
+            "amount": 199,
+            "user_id": 42,
+        }
+
+        storage = SimpleNamespace(
+            get_payment_by_order=lambda order_id: payment_record,
+            update_payment_status=lambda *args, **kwargs: None,
+            create_payment_record=lambda *args, **kwargs: None,
+        )
+
+        yookassa_client = SimpleNamespace(
+            check_payment=lambda payment_id: {"status": "succeeded", "paid": True},
+            capture_payment=lambda payment_id: {"success": True, "status": "succeeded"},
+            create_refund=Mock(return_value={"success": True, "refund_id": "refund_3", "status": "succeeded"}),
+        )
+
+        with patch.object(payments_handlers.app_context, "payment_storage", storage), \
+             patch.object(payments_handlers.app_context, "yookassa", yookassa_client), \
+             patch.dict(payments_handlers.TARIFFS, {
+                 "premium": {"id": "premium", "name": "Premium", "price": 199, "currency": "рублей", "duration_days": 30, "speed": "50 Мбит/с", "warp": False, "test_configs": False}
+             }):
+            await payments_handlers.handle_check_payment(update, context, 42, "order_1")
+
+        self.assertFalse(yookassa_client.create_refund.called)
+        self.assertIn("Платеж уже возвращен", update.callback_query.edited_messages[-1]["text"])
+
+    async def test_handle_check_change_payment_does_not_refund_twice_for_refunded_payment(self):
+        update = DummyUpdate()
+        context = SimpleNamespace(user_data={})
+        payment_record = {
+            "order_id": "change_42_10_premium",
+            "payment_id": "pay_4",
+            "status": "refunded",
+            "tariff_id": "premium",
+            "amount": 199,
+            "user_id": 42,
+        }
+
+        storage = SimpleNamespace(
+            get_payment_by_order=lambda order_id: payment_record,
+            update_payment_status=lambda *args, **kwargs: None,
+            create_payment_record=lambda *args, **kwargs: None,
+        )
+
+        yookassa_client = SimpleNamespace(
+            check_payment=lambda payment_id: {"status": "succeeded", "paid": True},
+            capture_payment=lambda payment_id: {"success": True, "status": "succeeded"},
+            create_refund=Mock(return_value={"success": True, "refund_id": "refund_4", "status": "succeeded"}),
+        )
+
+        with patch.object(payments_handlers.app_context, "payment_storage", storage), \
+             patch.object(payments_handlers.app_context, "yookassa", yookassa_client), \
+             patch.dict(payments_handlers.TARIFFS, {
+                 "premium": {"id": "premium", "name": "Premium", "price": 199, "currency": "рублей", "duration_days": 30, "speed": "50 Мбит/с", "warp": False, "test_configs": False}
+             }):
+            await payments_handlers.handle_check_change_payment(update, context, 42, "change_42_10_premium")
+
+        self.assertFalse(yookassa_client.create_refund.called)
+        self.assertIn("Платеж уже возвращен", update.callback_query.edited_messages[-1]["text"])
 
 
 if __name__ == "__main__":
