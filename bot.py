@@ -13,8 +13,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     filters,
+    JobQueue,
 )
-
 import config
 from database import db, TARIFFS
 from yookassa import YooKassaAPI, PaymentStorage
@@ -542,7 +542,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Start the bot."""
-    app = Application.builder().token(config.BOT_TOKEN).build()
+    app = Application.builder().token(config.BOT_TOKEN).job_queue(JobQueue()).build()
     
     # Commands
     app.add_handler(CommandHandler("start", start))
@@ -557,7 +557,7 @@ def main():
     app.add_error_handler(error_handler)
     
     # Background monitoring job
-    if config.MONITOR_INTERVAL_SECONDS > 0:
+    if config.MONITOR_INTERVAL_SECONDS > 0 and app.job_queue:
         app.job_queue.run_repeating(
             check_all_panels_and_alert,
             interval=config.MONITOR_INTERVAL_SECONDS,
