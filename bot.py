@@ -48,10 +48,21 @@ from handlers.admin import (
     handle_admin_simulate_referral, handle_admin_find,
     handle_ban, handle_unban, handle_makeadmin, handle_removeadmin,
 )
+from handlers.admin_promo import (
+    handle_admin_promos, handle_admin_promo_create_start,
+    handle_admin_promo_create_code, handle_admin_promo_create_discount,
+    handle_admin_promo_create_days, handle_admin_promo_create_valid_from,
+    handle_admin_promo_create_valid_until, handle_admin_promo_create_max_activations,
+    handle_admin_promo_create_tariffs, handle_admin_promo_create_text,
+    handle_admin_promo_create_idempotent,
+)
 from handlers.monitoring import (
     handle_monitor_menu, handle_monitor_refresh, handle_monitor_detail,
     check_all_panels_and_alert,
     handle_user_monitor_menu, handle_user_monitor_refresh,
+)
+from handlers.promo import (
+    handle_promo_menu, handle_promo_activate,
 )
 
 # Configure logging
@@ -487,6 +498,41 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Нет доступа")
             return
         await handle_admin_find(update, context, user_id)
+    elif data == "admin_promos":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promos(update, context, user_id)
+    elif data == "admin_promo_create":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_create_start(update, context, user_id)
+    elif data.startswith("admin_promo_detail_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_detail(update, context, user_id, data[18:])
+    elif data.startswith("admin_promo_edit_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_edit(update, context, user_id, data[16:])
+    elif data.startswith("admin_promo_delete_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_delete(update, context, user_id, data[17:])
+    elif data.startswith("admin_promo_activations_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_activations(update, context, user_id, data[24:])
+    elif data.startswith("admin_promo_toggle_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_toggle_active(update, context, user_id, data[18:])
     elif data.startswith("ban_"):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
@@ -535,6 +581,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_user_monitor_menu(update, context, user_id)
     elif data == "user_monitor_refresh":
         await handle_user_monitor_refresh(update, context, user_id)
+    
+    # ===== PROMO =====
+    elif data == "promo_menu":
+        await handle_promo_menu(update, context, user_id)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log errors."""

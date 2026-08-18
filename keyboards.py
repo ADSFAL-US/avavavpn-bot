@@ -40,7 +40,7 @@ def build_main_menu(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         keyboard.append([btn("❌ Отменить подписку", f"confirm_cancel_{active_sub['id']}")])
     
     keyboard.append([btn("👥 Реферальная система", "menu_referral"), btn("🛠 Поддержка", "menu_support")])
-    keyboard.append([btn("📡 Статус серверов", "user_node_status")])
+    keyboard.append([btn("🎁 Активировать промокод", "promo_menu"), btn("📡 Статус серверов", "user_node_status")])
     
     if is_admin(user_id):
         keyboard.append([btn("👑 Админ-панель", "admin_panel")])
@@ -589,5 +589,140 @@ def build_user_node_status(panel_statuses: list) -> tuple[str, InlineKeyboardMar
         [btn("🔄 Обновить", "user_monitor_refresh")],
         [btn("🏠 Главное меню", "main_menu")]
     ]
+    
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+# ===== ADMIN PROMO MANAGEMENT =====
+def build_admin_promos() -> tuple[str, InlineKeyboardMarkup]:
+    """Build admin promo management menu."""
+    stats = db.get_subscription_stats()
+    total_active = sum(s.get("active_count", 0) for s in stats.values())
+    
+    text = (
+        "🎁 <b>Управление промокодами</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 Пользователей: <b>{db.get_user_count()}</b>\n"
+        f"🟢 Активных подписок: <b>{total_active}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Выберите действие:\n"
+    )
+    
+    keyboard = [
+        [btn("📋 Список промокодов", "admin_promos_list")],
+        [btn("➕ Создать промокод", "admin_promo_create")],
+        [btn("🔍 Найти промокод", "admin_promo_find")],
+        [btn("📊 Статистика промокодов", "admin_promo_stats")],
+        [btn("🔙 В админ-панель", "admin_panel")],
+    ]
+    
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_promo_list(promos: list) -> tuple[str, InlineKeyboardMarkup]:
+    """Build promo list view."""
+    if not promos:
+        return "🎁 Промокоды не найдены", InlineKeyboardMarkup([[back_btn("admin_promos")]])
+    
+    text = "🎁 <b>Список промокодов</b>\n\n"
+    
+    for promo in promos:
+        status = "🟢" if promo.get("is_active", 1) else "🔴"
+        code = promo.get("code", "N/A")
+        discount = promo.get("discount_percent", 0)
+        days = promo.get("free_days", 0)
+        activations = promo.get("current_activations", 0)
+        max_activations = promo.get("max_activations", 1)
+        
+        text += (
+            f"{status} <code>{code}</code>\n"
+            f"💰 Скидка: {discount}% | ⏱ Дни: {days}\n"
+            f"🔢 Активаций: {activations}/{max_activations}\n"
+            f"📅 Срок действия: {promo.get('valid_from', 'N/A')} — {promo.get('valid_until', 'N/A')}\n"
+            f"🔧 Идемпотентность: {'Да' if promo.get('is_idempotent') else 'Нет'}\n\n"
+        )
+    
+    keyboard = [[back_btn("admin_promos")]]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_promo_detail(promo: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """Build promo detail view."""
+    if not promo:
+        return "❌ Промокод не найден", InlineKeyboardMarkup([[back_btn("admin_promos_list")]])
+    
+    text = (
+        f"🎁 <b>Промокод {promo.get('code', 'N/A')}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Скидка: <b>{promo.get('discount_percent', 0)}%</b>\n"
+        f"⏱ Бесплатные дни: <b>{promo.get('free_days', 0)}</b>\n"
+        f"🔢 Активаций: <b>{promo.get('current_activations', 0)}/{promo.get('max_activations', 1)}</b>\n"
+        f"📅 Срок действия: <b>{promo.get('valid_from', 'N/A')} — {promo.get('valid_until', 'N/A')}</b>\n"
+        f"🔧 Идемпотентность: <b>{'Да' if promo.get('is_idempotent') else 'Нет'}</b>\n"
+        f"📝 Статус: <b>{'Активен' if promo.get('is_active') else 'Неактивен'}</b>\n"
+        f"📝 Текст активации: <i>{promo.get('activation_text', 'Не указан')}</i>\n"
+    )
+    
+    keyboard = [
+        [btn("✏️ Редактировать", f"admin_promo_edit_{promo['id']}"),
+         btn("🗑️ Удалить", f"admin_promo_delete_{promo['id']}")],
+        [btn("👁️ Активации", f"admin_promo_activations_{promo['id']}"),
+         btn("🔄 Переключить статус", f"admin_promo_toggle_{promo['id']}")],
+        [back_btn("admin_promos_list")],
+    ]
+    
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_promo_create_flow() -> tuple[str, InlineKeyboardMarkup]:
+    """Build promo creation flow menu."""
+    text = (
+        "🎁 <b>Создание промокода</b>\n\n"
+        "Выберите шаг:\n"
+    )
+    
+    keyboard = [
+        [btn("📝 Ввести код", "admin_promo_create_code")],
+        [btn("💰 Установить скидку", "admin_promo_create_discount")],
+        [btn("⏱ Установить дни", "admin_promo_create_days")],
+        [btn("📅 Установить даты", "admin_promo_create_valid")],
+        [btn("🔢 Установить лимит", "admin_promo_create_max")],
+        [btn("📋 Установить тарифы", "admin_promo_create_tariffs")],
+        [btn("📝 Установить текст", "admin_promo_create_text")],
+        [btn("🔧 Установить идемпотентность", "admin_promo_create_idempotent")],
+        [back_btn("admin_promos")],
+    ]
+    
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def build_promo_edit_menu(promo: dict) -> tuple[str, InlineKeyboardMarkup]:
+    """Build promo edit field selection menu."""
+    if not promo:
+        return "❌ Промокод не найден", InlineKeyboardMarkup([[back_btn("admin_promos_list")]])
+    
+    text = (
+        f"✏️ <b>Редактировать промокод {promo.get('code', 'N/A')}</b>\n\n"
+        "Выберите поле для редактирования:\n"
+    )
+    
+    fields = [
+        ("code", "Код"),
+        ("discount_percent", "Скидка"),
+        ("free_days", "Дни"),
+        ("valid_from", "Дата начала"),
+        ("valid_until", "Дата окончания"),
+        ("max_activations", "Максимум активаций"),
+        ("applicable_tariffs", "Тарифы"),
+        ("activation_text", "Текст активации"),
+        ("is_idempotent", "Идемпотентность"),
+        ("is_active", "Статус"),
+    ]
+    
+    keyboard = []
+    for field, label in fields:
+        keyboard.append([btn(f"📝 {label}", f"admin_promo_edit_field_{promo['id']}_{field}")])
+    
+    keyboard.append([back_btn("admin_promo_detail_", promo['id'])])
     
     return text, InlineKeyboardMarkup(keyboard)

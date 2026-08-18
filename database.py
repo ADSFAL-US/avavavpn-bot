@@ -231,6 +231,46 @@ class Database:
             )
         """)
 
+        # Promo codes table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS promo_codes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                discount_percent INTEGER DEFAULT 0,
+                free_days INTEGER DEFAULT 0,
+                valid_from TIMESTAMP,
+                valid_until TIMESTAMP,
+                max_activations INTEGER DEFAULT 1,
+                current_activations INTEGER DEFAULT 0,
+                applicable_tariffs TEXT,
+                activation_text TEXT,
+                is_idempotent INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Promo activations table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS promo_activations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                promo_code_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                activated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                subscription_id INTEGER,
+                FOREIGN KEY (promo_code_id) REFERENCES promo_codes(id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
+            )
+        """)
+
+        # Unique index for idempotency enforcement
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_activations_unique 
+            ON promo_activations(promo_code_id, user_id)
+        """)
+
         self.conn.commit()
 
     def get_or_create_user(self, user_data):
@@ -647,6 +687,228 @@ class Database:
             self.conn.close()
             self.conn = None
 
+    # ===== PROMO CODES METHODS =====
+    
+    def create_promo_code(
+        self,
+        code,
+        discount_percent=0,
+        free_days=0,
+        valid_from=None,
+        valid_until=None,
+        max_activations=1,
+        applicable_tariffs=None,
+        activation_text=None,
+        is_idempotent=0,
+        is_active=1,
+    ):
+        """Create a new promo code."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """INSERT INTO promo_codes 
+               (code, discount_percent, free_days, valid_from, valid_until, 
+                max_activations, current_activations, applicable_tariffs, 
+                activation_text, is_idempotent, is_active)
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+            (
+                code.upper(),
+                discount_percent,
+                free_days,
+                valid_from,
+                valid_until,
+                max_activations,
+                applicable_tariffs,
+                activation_text,
+                is_idempotent,
+                is_active,
+            )
+        )
+        self.conn.commit()
+        promo_id = cursor.lastrowid
+        logger.info(f"Created promo code: id={promo_id}, code={code.upper()}")
+        return promo_id
+
+    def get_promo_code_by_code(self, code):
+        """Get promo code by code string (case-insensitive)."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT * FROM promo_codes WHERE UPPER(code) = ? AND is_active = 1",
+            (code.upper(),)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_promo_code_by_id(self, promo_id):
+        """Get promo code by ID."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM promo_codes WHERE id = ?", (promo_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def list_promo_codes(self, active_only=True):
+        """List all promo codes."""
+        cursor = self.conn.cursor()
+        if active_only:
+            cursor.execute("SELECT * FROM promo_codes WHERE is_active = 1 ORDER BY created_at DESC")
+        else:
+            cursor.execute("SELECT * FROM promo_codes ORDER BY created_at DESC")
+        return [dict(row) for row in cursor.fetchall()]
+
+    def update_promo_code(self, promo_id, **fields):
+        """Update promo code fields."""
+        if not fields:
+            return False
+        
+        # Build dynamic update query
+        set_clauses = []
+        params = []
+        for key, value in fields.items():
+            if key == "code" and value:
+                value = value.upper()
+            set_clauses.append(f"{key} = ?")
+            params.append(value)
+        
+        params.append(promo_id)
+        
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"UPDATE promo_codes SET {', '.join(set_clauses)} WHERE id = ?",
+            params
+        )
+        self.conn.commit()
+        
+        if cursor.rowcount > 0:
+            logger.info(f"Updated promo code id={promo_id} with fields: {list(fields.keys())}")
+            return True
+        return False
+
+    def delete_promo_code(self, promo_id):
+        """Soft delete promo code (set is_active=0)."""
+        cursor = self.conn.cursor()
+        cursor.execute("UPDATE promo_codes SET is_active = 0 WHERE id = ?", (promo_id,))
+        self.conn.commit()
+        
+        if cursor.rowcount > 0:
+            logger.info(f"Deleted promo code id={promo_id}")
+            return True
+        return False
+
+    def activate_promo_code(self, user_id, code):
+        """Activate a promo code for a user.
+        
+        Returns dict with:
+        - success: bool
+        - error: str (if failed)
+        - promo: promo data (if success)
+        - already_activated: bool (if not idempotent and already activated)
+        """
+        # Get promo code
+        promo = self.get_promo_code_by_code(code)
+        if not promo:
+            return {"success": False, "error": "Похоже такого промокода не существует"}
+        
+        # Check if active
+        if not promo.get("is_active", 1):
+            return {"success": False, "error": "Похоже этот промокод уже недействителен"}
+        
+        # Check validity period
+        now = datetime.now()
+        valid_from = promo.get("valid_from")
+        valid_until = promo.get("valid_until")
+        
+        if valid_from:
+            valid_from_dt = datetime.fromisoformat(valid_from)
+            if now < valid_from_dt:
+                return {"success": False, "error": "Промокод еще не активен"}
+        
+        if valid_until:
+            valid_until_dt = datetime.fromisoformat(valid_until)
+            if now > valid_until_dt:
+                return {"success": False, "error": "Похоже этот промокод уже недействителен"}
+        
+        # Check max activations
+        if promo.get("current_activations", 0) >= promo.get("max_activations", 1):
+            return {"success": False, "error": "Промокод исчерпал лимит активаций"}
+        
+        # Check idempotency
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id FROM promo_activations WHERE promo_code_id = ? AND user_id = ?",
+            (promo["id"], user_id)
+        )
+        existing = cursor.fetchone()
+        
+        if not promo.get("is_idempotent", 0) and existing:
+            return {"success": False, "error": "Вы уже активировали этот промокод"}
+        
+        # Check tariff restrictions
+        applicable_tariffs = promo.get("applicable_tariffs")
+        if applicable_tariffs:
+            import json
+            try:
+                tariffs = json.loads(applicable_tariffs)
+                if tariffs:  # non-empty list means restricted
+                    # This check should be done at subscription creation time
+                    # For now, we'll just note that promo is restricted
+                    pass
+            except:
+                pass
+        
+        # Create activation record
+        cursor.execute(
+            "INSERT INTO promo_activations (promo_code_id, user_id) VALUES (?, ?)",
+            (promo["id"], user_id)
+        )
+        activation_id = cursor.lastrowid
+        
+        # Increment activation counter
+        cursor.execute(
+            "UPDATE promo_codes SET current_activations = current_activations + 1 WHERE id = ?",
+            (promo["id"],)
+        )
+        
+        self.conn.commit()
+        
+        logger.info(f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}")
+        
+        return {
+            "success": True,
+            "promo": promo,
+            "activation_id": activation_id,
+            "message": "Промокод успешно активирован"
+        }
+
+    def get_promo_activations(self, promo_code_id):
+        """Get all activations for a promo code."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """SELECT pa.*, u.first_name, u.username 
+               FROM promo_activations pa
+               LEFT JOIN users u ON pa.user_id = u.user_id
+               WHERE pa.promo_code_id = ?
+               ORDER BY pa.activated_at DESC""",
+            (promo_code_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def cleanup_expired_promos(self, days_grace=1):
+        """Delete promos expired more than days_grace days ago."""
+        from datetime import datetime, timedelta
+        
+        cutoff_date = datetime.now() - timedelta(days=days_grace)
+        
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "DELETE FROM promo_codes WHERE valid_until < ? AND is_active = 1",
+            (cutoff_date.isoformat(),)
+        )
+        deleted_count = cursor.rowcount
+        self.conn.commit()
+        
+        if deleted_count > 0:
+            logger.info(f"Cleaned up {deleted_count} expired promo codes")
+        
+        return {"deleted_count": deleted_count}
 
     def populate_missing_panel_subscription_ids(self, xcontroller_client):
         """

@@ -24,6 +24,19 @@ STATE_SIMULATE_REFERRAL_USERID = "simulate_ref_userid"
 STATE_ADMIN_GIVE_USER_ID = "admin_give_user_id"
 STATE_ADMIN_GIVE_DAYS = "admin_give_days"
 
+# ===== PROMO CODE STATES =====
+STATE_PROMO_CODE = "promo_code"
+STATE_PROMO_DISCOUNT = "promo_discount"
+STATE_PROMO_DAYS = "promo_days"
+STATE_PROMO_VALID_FROM = "promo_valid_from"
+STATE_PROMO_VALID_UNTIL = "promo_valid_until"
+STATE_PROMO_MAX_ACTIVATIONS = "promo_max_activations"
+STATE_PROMO_TARIFFS = "promo_tariffs"
+STATE_PROMO_TEXT = "promo_text"
+STATE_PROMO_IDEMPOTENT = "promo_idempotent"
+STATE_PROMO_EDIT_FIELD = "promo_edit_field"
+STATE_PROMO_EDIT_VALUE = "promo_edit_value"
+
 
 # ===== HELPERS =====
 def is_admin(user_id: int) -> bool:
