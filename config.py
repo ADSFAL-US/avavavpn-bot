@@ -38,6 +38,8 @@ SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@support")
 DEFAULT_TRIAL_DAYS = int(os.getenv("DEFAULT_TRIAL_DAYS", "3"))
 
 # Monitoring Settings
-MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS", "300"))  # 5 minutes
+MONITOR_INTERVAL_SECONDS = int(
+    os.getenv("MONITOR_INTERVAL_SECONDS", "300")
+)  # 5 minutes
 ALERT_ON_DEGRADED = os.getenv("ALERT_ON_DEGRADED", "true").lower() == "true"
 ALERT_COOLDOWN_MINUTES = int(os.getenv("ALERT_COOLDOWN_MINUTES", "30"))

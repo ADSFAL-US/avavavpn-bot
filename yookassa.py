@@ -1,10 +1,11 @@
 # Avava VPN Bot - YooKassa Payment Integration
-import requests
-import datetime
 import logging
 import sqlite3
 import uuid
-from typing import Optional, Dict, Any
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class YooKassaAPI:
         self.test_mode = test_mode
         self.base_url = "https://api.yookassa.ru/v3"
         self.auth = (self.shop_id, self.api_key)
-        
+
         # Validate credentials
         if not self.shop_id or not self.api_key:
             raise ValueError("Shop ID and API key are required")
@@ -29,13 +30,13 @@ class YooKassaAPI:
         description: str,
         user_id: int,
         tariff_id: str,
-        order_id: Optional[str] = None,
-        return_url: Optional[str] = None,
+        order_id: str | None = None,
+        return_url: str | None = None,
         capture: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Create a payment link via YooKassa.
-        
+
         Args:
             amount: Payment amount in rubles
             description: Payment description
@@ -44,33 +45,30 @@ class YooKassaAPI:
             order_id: Unique order ID (auto-generated if not provided)
             return_url: URL to redirect after payment
             capture: Auto-capture payment (True) or hold for manual capture (False)
-        
+
         Returns:
             Dict with success status, payment_url, payment_id, order_id
         """
         # Generate unique order ID if not provided
         if not order_id:
             order_id = f"avava_{user_id}_{tariff_id}_{uuid.uuid4().hex[:8]}"
-        
+
         # Validate amount
         if amount <= 0:
             return {
                 "success": False,
                 "error": "Amount must be greater than 0",
             }
-        
+
         payload = {
-            "amount": {
-                "value": f"{amount:.2f}",
-                "currency": "RUB"
-            },
+            "amount": {"value": f"{amount:.2f}", "currency": "RUB"},
             "capture": capture,
             "description": description[:128],  # YooKassa limit
             "metadata": {
                 "user_id": str(user_id),
                 "tariff_id": tariff_id,
                 "order_id": order_id,
-                "created_at": datetime.datetime.now().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             },
             "confirmation": {
                 "type": "redirect",
@@ -87,16 +85,18 @@ class YooKassaAPI:
                 headers={
                     "Content-Type": "application/json",
                     "Idempotence-Key": order_id,  # Prevent duplicate payments
-                }
+                },
             )
             response.raise_for_status()
             data = response.json()
 
             if data.get("status") in ["pending", "waiting_for_capture"]:
                 confirmation = data.get("confirmation", {})
-                payment_url = confirmation.get("confirmation_url") or confirmation.get("url", "")
+                payment_url = confirmation.get("confirmation_url") or confirmation.get(
+                    "url", ""
+                )
                 payment_id = data.get("id", "")
-                
+
                 logger.info(
                     f"Payment created: order={order_id}, user={user_id}, "
                     f"tariff={tariff_id}, amount={amount}, url={payment_url[:50]}..."
@@ -109,7 +109,9 @@ class YooKassaAPI:
                     "status": data.get("status"),
                 }
             else:
-                logger.error(f"Unexpected payment status: {data.get('status')}, data: {data}")
+                logger.error(
+                    f"Unexpected payment status: {data.get('status')}, data: {data}"
+                )
                 return {
                     "success": False,
                     "error": f"Unexpected payment status: {data.get('status')}",
@@ -126,25 +128,25 @@ class YooKassaAPI:
             logger.error(f"YooKassa request failed: {e}")
             return {
                 "success": False,
-                "error": f"Payment gateway error: {str(e)}",
+                "error": f"Payment gateway error: {e!s}",
             }
-        except (ValueError, TypeError, RuntimeError) as e:
-            logger.exception(f"Unexpected error creating payment: {e}")
+        except (ValueError, TypeError, RuntimeError):
+            logger.exception("Unexpected error creating payment")
             return {
                 "success": False,
                 "error": "Internal error. Please contact support.",
             }
 
-    def check_payment(self, payment_id: str) -> Dict[str, Any]:
+    def check_payment(self, payment_id: str) -> dict[str, Any]:
         """
         Check payment status.
-        
+
         Returns:
             Dict with payment status or error
         """
         if not payment_id:
             return {"error": "Payment ID is required"}
-        
+
         try:
             response = requests.get(
                 f"{self.base_url}/payments/{payment_id}",
@@ -153,7 +155,7 @@ class YooKassaAPI:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             logger.info(f"Payment check: {payment_id}, status={data.get('status')}")
             return {
                 "success": True,
@@ -168,28 +170,30 @@ class YooKassaAPI:
         except requests.exceptions.RequestException as e:
             logger.error(f"Payment check failed: {e}")
             return {"error": str(e)}
-        except Exception as e:
-            logger.exception(f"Unexpected error checking payment: {e}")
+        except (ValueError, TypeError, RuntimeError):
+            logger.exception("Unexpected error checking payment")
             return {"error": "Internal error"}
 
-    def capture_payment(self, payment_id: str, amount: Optional[float] = None) -> Dict[str, Any]:
+    def capture_payment(
+        self, payment_id: str, amount: float | None = None
+    ) -> dict[str, Any]:
         """
         Capture a held payment (for two-stage payments).
-        
+
         Args:
             payment_id: Payment ID to capture
             amount: Amount to capture (None = full amount)
         """
         if not payment_id:
             return {"error": "Payment ID is required"}
-        
+
         payload = {}
         if amount is not None and amount > 0:
             payload["amount"] = {
                 "value": f"{amount:.2f}",
                 "currency": "RUB",
             }
-        
+
         try:
             response = requests.post(
                 f"{self.base_url}/payments/{payment_id}/capture",
@@ -199,7 +203,7 @@ class YooKassaAPI:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             logger.info(f"Payment captured: {payment_id}, status={data.get('status')}")
             return {
                 "success": True,
@@ -210,11 +214,11 @@ class YooKassaAPI:
             logger.error(f"Payment capture failed: {e}")
             return {"error": str(e)}
 
-    def cancel_payment(self, payment_id: str) -> Dict[str, Any]:
+    def cancel_payment(self, payment_id: str) -> dict[str, Any]:
         """Cancel a pending or held payment."""
         if not payment_id:
             return {"error": "Payment ID is required"}
-        
+
         try:
             response = requests.post(
                 f"{self.base_url}/payments/{payment_id}/cancel",
@@ -223,7 +227,7 @@ class YooKassaAPI:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             logger.info(f"Payment cancelled: {payment_id}")
             return {
                 "success": True,
@@ -234,14 +238,11 @@ class YooKassaAPI:
             return {"error": str(e)}
 
     def create_refund(
-        self,
-        payment_id: str,
-        amount: Optional[float] = None,
-        description: str = "Refund"
-    ) -> Dict[str, Any]:
+        self, payment_id: str, amount: float | None = None, description: str = "Refund"
+    ) -> dict[str, Any]:
         """
         Refund a payment.
-        
+
         Args:
             payment_id: Payment to refund
             amount: Amount to refund (None = full refund)
@@ -249,18 +250,18 @@ class YooKassaAPI:
         """
         if not payment_id:
             return {"error": "Payment ID is required"}
-        
+
         payload = {
             "payment_id": payment_id,
             "description": description[:128],
         }
-        
+
         if amount is not None and amount > 0:
             payload["amount"] = {
                 "value": f"{amount:.2f}",
                 "currency": "RUB",
             }
-        
+
         try:
             response = requests.post(
                 f"{self.base_url}/refunds",
@@ -270,7 +271,7 @@ class YooKassaAPI:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             logger.info(f"Refund created: payment={payment_id}, amount={amount}")
             return {
                 "success": True,
@@ -285,11 +286,11 @@ class YooKassaAPI:
 
 class PaymentStorage:
     """Persistent storage for payment state (replaces in-memory storage)."""
-    
+
     def __init__(self, db_connection):
         self.db = db_connection
         self._ensure_table()
-    
+
     def _ensure_table(self):
         """Create payments table if not exists."""
         cursor = self.db.cursor()
@@ -309,7 +310,7 @@ class PaymentStorage:
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
-        
+
         # Create index for faster lookups
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)
@@ -318,87 +319,107 @@ class PaymentStorage:
             CREATE INDEX IF NOT EXISTS idx_payments_payment_id ON payments(payment_id)
         """)
         self.db.commit()
-    
+
     def create_payment_record(
         self,
         order_id: str,
         user_id: int,
         tariff_id: str,
         amount: float,
-        payment_id: Optional[str] = None,
-        metadata: Optional[Dict] = None,
+        payment_id: str | None = None,
+        metadata: dict | None = None,
     ) -> bool:
         """Create a new payment record."""
         try:
             cursor = self.db.cursor()
             import json
-            cursor.execute("""
+
+            cursor.execute(
+                """
                 INSERT INTO payments (order_id, user_id, tariff_id, payment_id, amount, metadata)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                order_id,
-                user_id,
-                tariff_id,
-                payment_id,
-                amount,
-                json.dumps(metadata) if metadata else None,
-            ))
+            """,
+                (
+                    order_id,
+                    user_id,
+                    tariff_id,
+                    payment_id,
+                    amount,
+                    json.dumps(metadata) if metadata else None,
+                ),
+            )
             self.db.commit()
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to create payment record: {e}")
             return False
-    
+
     def update_payment_status(
         self,
         order_id: str,
         status: str,
-        payment_id: Optional[str] = None,
-        refund_id: Optional[str] = None,
+        payment_id: str | None = None,
+        refund_id: str | None = None,
     ) -> bool:
         """Update payment status."""
         try:
             cursor = self.db.cursor()
             if payment_id and refund_id:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE payments 
                     SET status = ?, payment_id = ?, refund_id = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE order_id = ?
-                """, (status, payment_id, refund_id, order_id))
+                """,
+                    (status, payment_id, refund_id, order_id),
+                )
             elif payment_id:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE payments 
                     SET status = ?, payment_id = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE order_id = ?
-                """, (status, payment_id, order_id))
+                """,
+                    (status, payment_id, order_id),
+                )
             elif refund_id:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE payments 
                     SET status = ?, refund_id = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE order_id = ?
-                """, (status, refund_id, order_id))
+                """,
+                    (status, refund_id, order_id),
+                )
             else:
-                cursor.execute("""
+                cursor.execute(
+                    """
                     UPDATE payments 
                     SET status = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE order_id = ?
-                """, (status, order_id))
+                """,
+                    (status, order_id),
+                )
             self.db.commit()
             return cursor.rowcount > 0
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to update payment status: {e}")
             return False
-    
-    def get_payment_by_order(self, order_id: str) -> Optional[Dict[str, Any]]:
+
+    def get_payment_by_order(self, order_id: str) -> dict[str, Any] | None:
         """Get payment by order ID."""
         try:
             cursor = self.db.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM payments WHERE order_id = ?
-            """, (order_id,))
+            """,
+                (order_id,),
+            )
             row = cursor.fetchone()
             if row:
                 import json
+
                 result = dict(row)
                 if result.get("metadata"):
                     try:
@@ -411,16 +432,20 @@ class PaymentStorage:
             logger.error(f"Failed to get payment: {e}")
             return None
 
-    def get_payment_by_payment_id(self, payment_id: str) -> Optional[Dict[str, Any]]:
+    def get_payment_by_payment_id(self, payment_id: str) -> dict[str, Any] | None:
         """Get payment by YooKassa payment ID."""
         try:
             cursor = self.db.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM payments WHERE payment_id = ?
-            """, (payment_id,))
+            """,
+                (payment_id,),
+            )
             row = cursor.fetchone()
             if row:
                 import json
+
                 result = dict(row)
                 if result.get("metadata"):
                     try:
@@ -432,18 +457,22 @@ class PaymentStorage:
         except (sqlite3.Error, AttributeError) as e:
             logger.error(f"Failed to get payment: {e}")
             return None
-    
+
     def get_pending_payments(self, user_id: int) -> list:
         """Get all pending payments for a user."""
         try:
             cursor = self.db.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT * FROM payments 
                 WHERE user_id = ? AND status = 'pending'
                 ORDER BY created_at DESC
-            """, (user_id,))
+            """,
+                (user_id,),
+            )
             rows = cursor.fetchall()
             import json
+
             result = []
             for row in rows:
                 item = dict(row)
@@ -457,22 +486,25 @@ class PaymentStorage:
         except (sqlite3.Error, AttributeError) as e:
             logger.error(f"Failed to get pending payments: {e}")
             return []
-    
+
     def clean_old_payments(self, hours: int = 24) -> int:
         """Clean expired pending payments."""
         try:
             cursor = self.db.cursor()
-            cutoff = datetime.datetime.now() - datetime.timedelta(hours=hours)
-            cursor.execute("""
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            cursor.execute(
+                """
                 DELETE FROM payments 
                 WHERE status = 'pending' AND created_at < ?
-            """, (cutoff.isoformat(),))
+            """,
+                (cutoff.isoformat(),),
+            )
             self.db.commit()
             count = cursor.rowcount
             if count > 0:
                 logger.info(f"Cleaned {count} expired payments")
             return count
-        except Exception as e:
+        except (sqlite3.Error, ValueError) as e:
             logger.error(f"Failed to clean old payments: {e}")
             return 0
 

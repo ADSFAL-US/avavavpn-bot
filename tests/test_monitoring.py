@@ -24,7 +24,10 @@ class DummyUpdate:
 
 class MonitoringTests(unittest.IsolatedAsyncioTestCase):
     async def test_get_panel_statuses_uses_cache(self):
-        monitoring_handlers._panel_status_cache = {"data": [{"panel": {"id": 1}, "health": {"status": "healthy"}}], "expiry": 9999999999}
+        monitoring_handlers._panel_status_cache = {
+            "data": [{"panel": {"id": 1}, "health": {"status": "healthy"}}],
+            "expiry": 9999999999,
+        }
         with patch.object(monitoring_handlers.app_context, "xcontroller", None):
             statuses = monitoring_handlers._get_panel_statuses()
         self.assertEqual(len(statuses), 1)
@@ -41,17 +44,23 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
         context = SimpleNamespace()
         with patch.object(monitoring_handlers, "is_admin", return_value=True):
             await monitoring_handlers.handle_monitor_detail(update, context, 1, "abc")
-        self.assertIn("Неверный ID панели", update.callback_query.edited_messages[0]["text"])
+        self.assertIn(
+            "Неверный ID панели", update.callback_query.edited_messages[0]["text"]
+        )
 
     async def test_handle_user_monitor_menu_renders_without_panels(self):
         update = DummyUpdate()
         context = SimpleNamespace()
         monitoring_handlers._panel_status_cache = {"data": [], "expiry": 0}
         await monitoring_handlers.handle_user_monitor_menu(update, context, 1)
-        self.assertIn("Серверов не настроено", update.callback_query.edited_messages[0]["text"])
+        self.assertIn(
+            "Серверов не настроено", update.callback_query.edited_messages[0]["text"]
+        )
 
     async def test_clear_panel_alert_state_clears_all(self):
-        monitoring_handlers._panel_alert_state["panel1"] = monitoring_handlers.datetime.now()
+        monitoring_handlers._panel_alert_state["panel1"] = (
+            monitoring_handlers.datetime.now()
+        )
         monitoring_handlers.clear_panel_alert_state()
         self.assertEqual(monitoring_handlers._panel_alert_state, {})
 
@@ -61,9 +70,18 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
         panel = {"id": 1, "name": "Alpha"}
         health = {"status": monitoring_handlers.PANEL_STATUS_UNHEALTHY, "error": "down"}
 
-        with patch.object(monitoring_handlers.app_context, "xcontroller", SimpleNamespace(get_panels=lambda: [panel], check_panel_health=lambda panel_id: health)), \
-             patch.object(monitoring_handlers.config, "ADMIN_IDS", [123]), \
-             patch.object(monitoring_handlers.config, "ALERT_COOLDOWN_MINUTES", 0):
+        with (
+            patch.object(
+                monitoring_handlers.app_context,
+                "xcontroller",
+                SimpleNamespace(
+                    get_panels=lambda: [panel],
+                    check_panel_health=lambda panel_id: health,
+                ),
+            ),
+            patch.object(monitoring_handlers.config, "ADMIN_IDS", [123]),
+            patch.object(monitoring_handlers.config, "ALERT_COOLDOWN_MINUTES", 0),
+        ):
             await monitoring_handlers.check_all_panels_and_alert(context)
 
         self.assertTrue(context.bot.send_message.await_count > 0)

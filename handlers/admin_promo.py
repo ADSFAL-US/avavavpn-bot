@@ -1,24 +1,19 @@
-# handlers/admin.py — Admin panel, user management, bans, give subscription, referral simulation
+"""Admin promo code handlers for Avava VPN Bot."""
+
+import json
 import logging
 from datetime import datetime, timezone
 
 from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from database import TARIFFS, db
+from database import db
 from keyboards import (
-    build_admin_logs,
-    build_admin_panel,
     build_admin_promos,
-    build_admin_stats,
-    build_admin_subscriptions,
-    build_admin_users,
+    build_promo_detail,
+    build_promo_edit_menu,
 )
 from utils import (
-    STATE_ADMIN_GIVE_DAYS,
-    STATE_ADMIN_GIVE_USER_ID,
-    STATE_BAN_REASON,
-    STATE_FIND_USER,
     STATE_PROMO_CODE,
     STATE_PROMO_DAYS,
     STATE_PROMO_DISCOUNT,
@@ -28,181 +23,10 @@ from utils import (
     STATE_PROMO_TEXT,
     STATE_PROMO_VALID_FROM,
     STATE_PROMO_VALID_UNTIL,
-    STATE_SIMULATE_REFERRAL_USERID,
     back_btn,
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def handle_admin_panel(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    text, markup = build_admin_panel(user_id)
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
-
-
-async def handle_admin_stats(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    text, markup = build_admin_stats()
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
-
-
-async def handle_admin_users(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    text, markup = build_admin_users()
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
-
-
-async def handle_admin_subscriptions(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    text, markup = build_admin_subscriptions()
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
-
-
-async def handle_admin_logs(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    text, markup = build_admin_logs()
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
-
-
-async def handle_admin_give_subscription(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    context.user_data["state"] = STATE_ADMIN_GIVE_USER_ID
-    text = (
-        "🎁 <b>Выдать подписку пользователю</b>\n\n"
-        "Введите числовой Telegram ID пользователя:"
-    )
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_admin_give_tariff(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, tariff_id: str
-):
-    query = update.callback_query
-    tariff = TARIFFS.get(tariff_id)
-    if not tariff:
-        await query.edit_message_text("❌ Тариф не найден")
-        return
-
-    target_user_id = context.user_data.get("admin_give_target")
-    if not target_user_id:
-        await query.edit_message_text(
-            "❌ Ошибка: ID пользователя не найден. Начните заново."
-        )
-        return
-
-    context.user_data["admin_give_tariff"] = tariff_id
-    context.user_data["state"] = STATE_ADMIN_GIVE_DAYS
-
-    text = (
-        f"🎁 <b>Выдача подписки</b>\n\n"
-        f"👤 Пользователь: <code>{target_user_id}</code>\n"
-        f"📌 Тариф: {tariff['name']}\n\n"
-        f"Введите количество дней (целое число):"
-    )
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_admin_simulate_referral(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    context.user_data["state"] = STATE_SIMULATE_REFERRAL_USERID
-    text = (
-        "🧪 <b>Симуляция реферала</b>\n\n"
-        "Введите числовой Telegram ID <b>тестового пользователя</b>, "
-        "который будет «приглашён» вами."
-    )
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_admin_find(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
-):
-    query = update.callback_query
-    context.user_data["state"] = STATE_FIND_USER
-    text = "🔍 <b>Поиск пользователя</b>\n\nВведите ID пользователя:"
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_ban(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, target_id_str: str
-):
-    query = update.callback_query
-    target_id = int(target_id_str)
-    context.user_data["state"] = STATE_BAN_REASON
-    context.user_data["ban_target"] = target_id
-    text = f"🔨 <b>Бан пользователя {target_id}</b>\n\nВведите причину или 'навсегда':"
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_unban(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, target_id_str: str
-):
-    query = update.callback_query
-    target_id = int(target_id_str)
-    db.unban_user(target_id)
-    db.log_admin_action(user_id, "unban", target_id)
-    text = f"✅ Пользователь <code>{target_id}</code> разбанен"
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_makeadmin(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, target_id_str: str
-):
-    query = update.callback_query
-    target_id = int(target_id_str)
-    db.set_admin(target_id)
-    db.log_admin_action(user_id, "make_admin", target_id)
-    text = f"✅ Пользователь <code>{target_id}</code> стал админом"
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-
-async def handle_removeadmin(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, target_id_str: str
-):
-    query = update.callback_query
-    target_id = int(target_id_str)
-    db.remove_admin(target_id)
-    db.log_admin_action(user_id, "remove_admin", target_id)
-    text = f"✅ Админка у <code>{target_id}</code> снята"
-    keyboard = [[back_btn("admin_panel")]]
-    await query.edit_message_text(
-        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-    )
 
 
 async def handle_admin_promos(
@@ -419,8 +243,6 @@ async def handle_admin_promo_create_tariffs(
             if tariff not in valid_tariffs:
                 await update.message.reply_text(f"❌ Неизвестный тариф: {tariff}")
                 return
-        import json
-
         applicable_tariffs = json.dumps(tariffs_list)
 
     context.user_data["promo_tariffs"] = applicable_tariffs
@@ -530,3 +352,81 @@ async def handle_admin_promo_create_idempotent(
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup([[back_btn("admin_panel")]]),
     )
+
+
+async def handle_admin_promo_detail(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str
+):
+    """Show promo code detail."""
+    query = update.callback_query
+    promo = db.get_promo_code_by_id(int(promo_id))
+    text, markup = build_promo_detail(promo)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def handle_admin_promo_edit(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str
+):
+    """Show promo edit menu."""
+    query = update.callback_query
+    promo = db.get_promo_code_by_id(int(promo_id))
+    text, markup = build_promo_edit_menu(promo)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def handle_admin_promo_delete(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str
+):
+    """Delete promo code."""
+    query = update.callback_query
+    success = db.delete_promo_code(int(promo_id))
+    if success:
+        await query.edit_message_text(
+            "✅ Промокод удален",
+            reply_markup=InlineKeyboardMarkup([[back_btn("admin_promos")]]),
+        )
+    else:
+        await query.edit_message_text(
+            "❌ Ошибка удаления",
+            reply_markup=InlineKeyboardMarkup([[back_btn("admin_promos")]]),
+        )
+
+
+async def handle_admin_promo_activations(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str
+):
+    """Show promo activations."""
+    query = update.callback_query
+    activations = db.get_promo_activations(int(promo_id))
+
+    if not activations:
+        text = "📋 Активаций нет"
+    else:
+        text = "📋 <b>Активации промокода</b>\n\n"
+        for act in activations[:20]:
+            user = db.get_user_by_id(act["user_id"])
+            username = (
+                f"@{user['username']}"
+                if user and user.get("username")
+                else f"ID: {act['user_id']}"
+            )
+            text += f"👤 {username} — {act['activated_at']}\n"
+
+    keyboard = [[back_btn(f"admin_promo_detail_{promo_id}")]]
+    await query.edit_message_text(
+        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_admin_promo_toggle_active(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str
+):
+    """Toggle promo code active status."""
+    query = update.callback_query
+    promo = db.get_promo_code_by_id(int(promo_id))
+    new_status = 0 if promo.get("is_active", 1) else 1
+    db.update_promo_code(int(promo_id), is_active=new_status)
+
+    promo = db.get_promo_code_by_id(int(promo_id))
+    text, markup = build_promo_detail(promo)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
