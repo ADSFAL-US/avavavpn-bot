@@ -38,6 +38,7 @@ from handlers.admin import (
 )
 from handlers.admin_promo import (
     handle_admin_promo_activations,
+    handle_admin_promo_create_code,
     handle_admin_promo_create_start,
     handle_admin_promo_delete,
     handle_admin_promo_detail,
@@ -261,6 +262,12 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 text, parse_mode="HTML", reply_markup=markup
             )
+            return
+
+        if context.user_data.get("admin_promo_create"):
+            # Admin is creating a promo code - delegate to admin handler
+            context.user_data["admin_promo_create"] = False
+            await handle_admin_promo_create_code(update, context, update.effective_user.id)
             return
 
         # User is activating a promo code
