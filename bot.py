@@ -42,8 +42,11 @@ from handlers.admin_promo import (
     handle_admin_promo_delete,
     handle_admin_promo_detail,
     handle_admin_promo_edit,
+    handle_admin_promo_find,
+    handle_admin_promo_stats,
     handle_admin_promo_toggle_active,
     handle_admin_promos,
+    handle_admin_promos_list,
 )
 from handlers.monitoring import (
     check_all_panels_and_alert,
@@ -76,10 +79,12 @@ from handlers.payments import (
     handle_subscribe,
 )
 from handlers.promo import (
+    handle_promo_activate,
     handle_promo_menu,
 )
 from keyboards import (
     build_main_menu,
+    build_promo_detail,
     build_user_detail,
 )
 from utils import (
@@ -88,6 +93,7 @@ from utils import (
     STATE_BAN_REASON,
     STATE_FIND_USER,
     STATE_IDLE,
+    STATE_PROMO_CODE,
     STATE_SIMULATE_REFERRAL_USERID,
     back_btn,
     btn,
@@ -238,6 +244,28 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             msg_text, parse_mode="HTML", reply_markup=markup
         )
+
+    elif state == STATE_PROMO_CODE:
+        # Handle promo code input
+        if context.user_data.get("admin_promo_find"):
+            # Admin is searching for a promo code
+            context.user_data["admin_promo_find"] = False
+            context.user_data["state"] = STATE_IDLE
+            code = text.strip().upper()
+            promo = db.get_promo_code_by_code(code)
+            if promo:
+                text, markup = build_promo_detail(promo)
+            else:
+                text = f"❌ Промокод <code>{code}</code> не найден"
+                markup = InlineKeyboardMarkup([[back_btn("admin_promos")]])
+            await update.message.reply_text(
+                text, parse_mode="HTML", reply_markup=markup
+            )
+            return
+
+        # User is activating a promo code
+        await handle_promo_activate(update, context, update.effective_user.id)
+        return
 
     elif state == STATE_BAN_REASON:
         # Handle ban reason input
@@ -589,6 +617,21 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Нет доступа")
             return
         await handle_admin_promo_create_start(update, context, user_id)
+    elif data == "admin_promos_list":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promos_list(update, context, user_id)
+    elif data == "admin_promo_find":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_find(update, context, user_id)
+    elif data == "admin_promo_stats":
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        await handle_admin_promo_stats(update, context, user_id)
     elif data.startswith("admin_promo_detail_"):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")

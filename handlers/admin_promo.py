@@ -12,6 +12,7 @@ from keyboards import (
     build_admin_promos,
     build_promo_detail,
     build_promo_edit_menu,
+    build_promo_list,
 )
 from utils import (
     STATE_PROMO_CODE,
@@ -430,3 +431,56 @@ async def handle_admin_promo_toggle_active(
     promo = db.get_promo_code_by_id(int(promo_id))
     text, markup = build_promo_detail(promo)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def handle_admin_promos_list(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
+    """Show list of all promo codes."""
+    query = update.callback_query
+    promos = db.get_all_promo_codes()
+    text, markup = build_promo_list(promos)
+    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+
+
+async def handle_admin_promo_find(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
+    """Prompt admin to enter promo code to find."""
+    query = update.callback_query
+    context.user_data["state"] = STATE_PROMO_CODE
+    context.user_data["admin_promo_find"] = True
+    text = (
+        "🔍 <b>Найти промокод</b>\n\n"
+        "Введите код промокода для поиска:"
+    )
+    keyboard = [[back_btn("admin_promos")]]
+    await query.edit_message_text(
+        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_admin_promo_stats(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
+    """Show promo codes statistics."""
+    query = update.callback_query
+    promos = db.get_all_promo_codes()
+    total_promos = len(promos)
+    active_promos = sum(1 for p in promos if p.get("is_active", 1))
+    total_activations = sum(p.get("current_activations", 0) for p in promos)
+
+    text = (
+        "📊 <b>Статистика промокодов</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📋 Всего промокодов: <b>{total_promos}</b>\n"
+        f"🟢 Активных: <b>{active_promos}</b>\n"
+        f"🔴 Неактивных: <b>{total_promos - active_promos}</b>\n"
+        f"🔢 Всего активаций: <b>{total_activations}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    )
+
+    keyboard = [[back_btn("admin_promos")]]
+    await query.edit_message_text(
+        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
