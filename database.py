@@ -1,8 +1,11 @@
 # Avava VPN Bot - Database Model
-import sqlite3
 import logging
+import sqlite3
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+import requests
+
 from config import DATABASE_PATH
 
 logger = logging.getLogger(__name__)
@@ -117,28 +120,34 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         """)
-        
+
         # Migration: add new columns if they don't exist
         try:
             cursor.execute("SELECT panel_subscription_id FROM subscriptions LIMIT 1")
         except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE subscriptions ADD COLUMN panel_subscription_id INTEGER")
+            cursor.execute(
+                "ALTER TABLE subscriptions ADD COLUMN panel_subscription_id INTEGER"
+            )
             cursor.execute("ALTER TABLE subscriptions ADD COLUMN panel_sub_token TEXT")
             cursor.execute("ALTER TABLE subscriptions ADD COLUMN payment_id TEXT")
             self.conn.commit()
             logger.info("Migrated subscriptions table with panel fields")
-        except Exception as e:
+        except (sqlite3.Error, ValueError) as e:
             logger.warning(f"Migration check error (may be already migrated): {e}")
-        
+
         # Add test_configs_enabled column
         try:
             cursor.execute("SELECT test_configs_enabled FROM subscriptions LIMIT 1")
         except sqlite3.OperationalError:
-            cursor.execute("ALTER TABLE subscriptions ADD COLUMN test_configs_enabled INTEGER DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE subscriptions ADD COLUMN test_configs_enabled INTEGER DEFAULT 0"
+            )
             self.conn.commit()
             logger.info("Migrated subscriptions table with test_configs_enabled field")
-        except Exception as e:
-            logger.warning(f"Migration check for test_configs_enabled failed (may be already migrated): {e}")
+        except (sqlite3.Error, ValueError) as e:
+            logger.warning(
+                f"Migration check for test_configs_enabled failed (may be already migrated): {e}"
+            )
 
         # Add missing columns for referral system
         missing_columns = [
@@ -146,42 +155,52 @@ class Database:
             ("referral_days", "REAL DEFAULT 0"),
             ("referred_by", "INTEGER"),
             ("has_used_discount", "BOOLEAN DEFAULT 0"),
-            ("has_rewarded_referrer", "BOOLEAN DEFAULT 0")
+            ("has_rewarded_referrer", "BOOLEAN DEFAULT 0"),
         ]
-        
+
         for column_name, column_def in missing_columns:
             try:
                 cursor.execute(f"SELECT {column_name} FROM users LIMIT 1")
             except sqlite3.OperationalError:
-                cursor.execute(f"ALTER TABLE users ADD COLUMN {column_name} {column_def}")
+                cursor.execute(
+                    f"ALTER TABLE users ADD COLUMN {column_name} {column_def}"
+                )
                 self.conn.commit()
                 logger.info(f"Added {column_name} column to users table")
-        
+
         # Generate referral codes for existing users
         cursor.execute("SELECT user_id FROM users WHERE referral_code IS NULL")
         users_without_code = cursor.fetchall()
-        
+
         for user_row in users_without_code:
             user_id = user_row["user_id"]
             referral_code = f"REF_{user_id}_{uuid.uuid4().hex[:6]}"
             cursor.execute(
                 "UPDATE users SET referral_code = ? WHERE user_id = ?",
-                (referral_code, user_id)
+                (referral_code, user_id),
             )
-        
+
         if users_without_code:
             self.conn.commit()
-            logger.info(f"Generated referral codes for {len(users_without_code)} existing users")
-        
+            logger.info(
+                f"Generated referral codes for {len(users_without_code)} existing users"
+            )
+
         # Set default values for missing fields
         cursor.execute("UPDATE users SET referral_days = 0 WHERE referral_days IS NULL")
-        cursor.execute("UPDATE users SET has_used_discount = 0 WHERE has_used_discount IS NULL")
-        cursor.execute("UPDATE users SET has_rewarded_referrer = 0 WHERE has_rewarded_referrer IS NULL")
+        cursor.execute(
+            "UPDATE users SET has_used_discount = 0 WHERE has_used_discount IS NULL"
+        )
+        cursor.execute(
+            "UPDATE users SET has_rewarded_referrer = 0 WHERE has_rewarded_referrer IS NULL"
+        )
         self.conn.commit()
-        
+
         # Create unique index for referral_code if not exists
         try:
-            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)")
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_referral_code ON users(referral_code)"
+            )
             self.conn.commit()
             logger.info("Created unique index for referral_code")
         except sqlite3.OperationalError as e:
@@ -276,28 +295,28 @@ class Database:
     def get_or_create_user(self, user_data):
         """Get existing user or create a new one."""
         user_id = user_data.get("user_id")
-        
+
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         user = cursor.fetchone()
-        
+
         if user:
             return dict(user)
-        
+
         # Create new user with referral code
         first_name = user_data.get("first_name", "")
         username = user_data.get("username", "")
         last_name = user_data.get("last_name", "")
         referral_code = f"REF_{user_id}_{uuid.uuid4().hex[:6]}"
         referred_by = user_data.get("referred_by")
-        
+
         cursor.execute(
             """INSERT INTO users (user_id, username, first_name, last_name, referral_code, referred_by)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, username, first_name, last_name, referral_code, referred_by)
+            (user_id, username, first_name, last_name, referral_code, referred_by),
         )
         self.conn.commit()
-        
+
         return {
             "user_id": user_id,
             "username": username,
@@ -305,7 +324,7 @@ class Database:
             "last_name": last_name,
             "phone": None,
             "is_admin": 0,
-            "registered_at": datetime.now().isoformat(),
+            "registered_at": datetime.now(timezone.utc).isoformat(),
             "banned": 0,
             "ban_reason": None,
             "ban_expires": None,
@@ -313,7 +332,7 @@ class Database:
             "referral_days": 0,
             "referred_by": referred_by,
             "has_used_discount": False,
-            "has_rewarded_referrer": False
+            "has_rewarded_referrer": False,
         }
 
     def is_admin(self, user_id):
@@ -348,7 +367,7 @@ class Database:
             """SELECT * FROM subscriptions
                WHERE user_id = ? AND status = 'active'
                ORDER BY id DESC LIMIT 1""",
-            (user_id,)
+            (user_id,),
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -356,10 +375,7 @@ class Database:
     def get_subscription_by_id(self, subscription_id):
         """Get subscription by ID."""
         cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM subscriptions WHERE id = ?",
-            (subscription_id,)
-        )
+        cursor.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
@@ -367,8 +383,7 @@ class Database:
         """Get all subscriptions for a user."""
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT * FROM subscriptions WHERE user_id = ? ORDER BY id DESC",
-            (user_id,)
+            "SELECT * FROM subscriptions WHERE user_id = ? ORDER BY id DESC", (user_id,)
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -390,21 +405,21 @@ class Database:
         if not tariff:
             raise ValueError(f"Unknown tariff: {tariff_id}")
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         if ends_at is None:
             ends_at = now + timedelta(days=tariff["duration_days"])
-        
+
         if traffic_limit_mb is None and tariff["traffic_limit_gb"]:
             traffic_limit_mb = tariff["traffic_limit_gb"] * 1024  # GB to MB
-        
+
         if speed_mbps is None:
             speed_mbps = self._parse_speed(tariff["speed"])
-        
+
         if warp_enabled is None:
             warp_enabled = int(tariff["warp"])
         if test_configs_enabled is None:
             test_configs_enabled = int(tariff.get("test_configs", False))
-        
+
         cursor = self.conn.cursor()
         cursor.execute(
             """INSERT INTO subscriptions 
@@ -413,7 +428,8 @@ class Database:
                 panel_subscription_id, panel_sub_token, payment_id)
                VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                user_id, tariff_id,
+                user_id,
+                tariff_id,
                 ends_at.isoformat() if ends_at else None,
                 speed_mbps,
                 traffic_limit_mb,
@@ -422,7 +438,7 @@ class Database:
                 panel_subscription_id,
                 panel_sub_token,
                 payment_id,
-            )
+            ),
         )
         subscription_id = cursor.lastrowid
         self.conn.commit()
@@ -431,7 +447,7 @@ class Database:
             f"Created subscription: id={subscription_id}, user={user_id}, "
             f"tariff={tariff_id}, panel_id={panel_subscription_id}"
         )
-        
+
         return {
             "id": subscription_id,
             "status": "created",
@@ -444,7 +460,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute(
             "UPDATE subscriptions SET status = 'cancelled' WHERE id = ? AND user_id = ?",
-            (subscription_id, user_id)
+            (subscription_id, user_id),
         )
         self.conn.commit()
         return cursor.rowcount > 0
@@ -455,12 +471,12 @@ class Database:
         if user_id is not None:
             cursor.execute(
                 "UPDATE subscriptions SET status = 'cancelled' WHERE tariff_id = ? AND user_id = ? AND status = 'active'",
-                (tariff_id, user_id)
+                (tariff_id, user_id),
             )
         else:
             cursor.execute(
                 "UPDATE subscriptions SET status = 'cancelled' WHERE tariff_id = ? AND status = 'active'",
-                (tariff_id,)
+                (tariff_id,),
             )
         self.conn.commit()
         return cursor.rowcount
@@ -470,29 +486,29 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute(
             "UPDATE subscriptions SET speed_mbps = ? WHERE id = ?",
-            (speed_mbps, subscription_id)
+            (speed_mbps, subscription_id),
         )
         self.conn.commit()
 
     def update_traffic_used(self, user_id, bytes_transferred):
         """Update traffic usage for a user."""
         mb_transferred = bytes_transferred / (1024 * 1024)  # bytes to MB
-        
+
         cursor = self.conn.cursor()
-        
+
         # Get current subscription
         cursor.execute(
             """SELECT id, traffic_used_mb FROM subscriptions 
                WHERE user_id = ? AND status = 'active'""",
-            (user_id,)
+            (user_id,),
         )
         sub = cursor.fetchone()
-        
+
         if sub:
             new_used = (sub["traffic_used_mb"] or 0) + mb_transferred
             cursor.execute(
                 "UPDATE subscriptions SET traffic_used_mb = ? WHERE id = ?",
-                (new_used, sub["id"])
+                (new_used, sub["id"]),
             )
             self.conn.commit()
 
@@ -505,7 +521,9 @@ class Database:
     def get_active_subscription_count(self):
         """Get count of active subscriptions."""
         cursor = self.conn.cursor()
-        cursor.execute("SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active'")
+        cursor.execute(
+            "SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active'"
+        )
         return cursor.fetchone()["count"]
 
     def get_all_users(self, offset=0, limit=100):
@@ -513,7 +531,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT * FROM users ORDER BY registered_at DESC LIMIT ? OFFSET ?",
-            (limit, offset)
+            (limit, offset),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -527,17 +545,17 @@ class Database:
     def ban_user(self, user_id, reason=None, duration_days=None):
         """Ban a user."""
         cursor = self.conn.cursor()
-        
+
         if duration_days:
-            expires = datetime.now() + timedelta(days=duration_days)
+            expires = datetime.now(timezone.utc) + timedelta(days=duration_days)
             cursor.execute(
                 "UPDATE users SET banned = 1, ban_reason = ?, ban_expires = ? WHERE user_id = ?",
-                (reason, expires.isoformat(), user_id)
+                (reason, expires.isoformat(), user_id),
             )
         else:
             cursor.execute(
                 "UPDATE users SET banned = 1, ban_reason = ?, ban_expires = NULL WHERE user_id = ?",
-                (reason, user_id)
+                (reason, user_id),
             )
         self.conn.commit()
 
@@ -546,7 +564,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute(
             "UPDATE users SET banned = 0, ban_reason = NULL, ban_expires = NULL WHERE user_id = ?",
-            (user_id,)
+            (user_id,),
         )
         self.conn.commit()
 
@@ -555,7 +573,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute(
             "INSERT INTO admin_log (admin_id, action, target_user_id, details) VALUES (?, ?, ?, ?)",
-            (admin_id, action, target_user_id, details)
+            (admin_id, action, target_user_id, details),
         )
         self.conn.commit()
 
@@ -567,7 +585,7 @@ class Database:
                FROM admin_log l 
                LEFT JOIN users u ON l.admin_id = u.user_id 
                ORDER BY l.created_at DESC LIMIT ?""",
-            (limit,)
+            (limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -576,24 +594,24 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT COUNT(*) as count FROM subscriptions WHERE user_id = ? AND tariff_id = ?",
-            (user_id, tariff_id)
+            (user_id, tariff_id),
         )
         row = cursor.fetchone()
         return row["count"] > 0 if row else False
-        
+
     def add_referral_days(self, user_id, days):
         """Add referral days to user's balance."""
         cursor = self.conn.cursor()
         cursor.execute(
             "UPDATE users SET referral_days = referral_days + ? WHERE user_id = ?",
-            (days, user_id)
+            (days, user_id),
         )
         self.conn.commit()
         return True
-    
+
     def reward_referrer(self, user_id, tariff_id):
         """Reward the referrer of a user if they haven't been rewarded yet.
-        
+
         Returns True if referrer was rewarded, False otherwise.
         """
         user = self.get_user_by_id(user_id)
@@ -604,24 +622,31 @@ class Database:
         referrer_id = user["referred_by"]
         if referrer_id == user_id:
             return False  # self-referral protection
-        
+
         cursor = self.conn.cursor()
         self.add_referral_days(referrer_id, 7)
-        cursor.execute("UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?", (user_id,))
+        cursor.execute(
+            "UPDATE users SET has_rewarded_referrer = 1 WHERE user_id = ?", (user_id,)
+        )
         self.conn.commit()
-        logger.info(f"Referrer {referrer_id} got 7 days for referral of {user_id} (tariff={tariff_id})")
-        
+        logger.info(
+            f"Referrer {referrer_id} got 7 days for referral of {user_id} (tariff={tariff_id})"
+        )
+
         # Также отмечаем, что скидка использована (для платных тарифов)
         if tariff_id not in ("trial",):
             self.set_discount_used(user_id)
-        
+
         return True
-    
+
     def extend_subscription(self, subscription_id, extra_days):
         """Extend an existing subscription's ends_at by extra_days."""
         from datetime import datetime, timedelta
+
         cursor = self.conn.cursor()
-        cursor.execute("SELECT ends_at FROM subscriptions WHERE id = ?", (subscription_id,))
+        cursor.execute(
+            "SELECT ends_at FROM subscriptions WHERE id = ?", (subscription_id,)
+        )
         row = cursor.fetchone()
         if not row:
             return False
@@ -633,24 +658,27 @@ class Database:
                 current_end = datetime.fromisoformat(clean)
                 new_end = current_end + timedelta(days=extra_days)
             except (ValueError, TypeError):
-                logger.warning(f"Failed to parse ends_at '{ends_at}', extending from now")
-                new_end = datetime.now() + timedelta(days=extra_days)
+                logger.warning(
+                    f"Failed to parse ends_at '{ends_at}', extending from now"
+                )
+                new_end = datetime.now(timezone.utc) + timedelta(days=extra_days)
         else:
-            new_end = datetime.now() + timedelta(days=extra_days)
+            new_end = datetime.now(timezone.utc) + timedelta(days=extra_days)
         cursor.execute(
             "UPDATE subscriptions SET ends_at = ? WHERE id = ?",
-            (new_end.isoformat(), subscription_id)
+            (new_end.isoformat(), subscription_id),
         )
         self.conn.commit()
-        logger.info(f"Extended subscription {subscription_id} by {extra_days} days, new ends_at={new_end.isoformat()}")
+        logger.info(
+            f"Extended subscription {subscription_id} by {extra_days} days, new ends_at={new_end.isoformat()}"
+        )
         return True
-    
+
     def set_discount_used(self, user_id):
         """Mark user's discount as used."""
         cursor = self.conn.cursor()
         cursor.execute(
-            "UPDATE users SET has_used_discount = 1 WHERE user_id = ?",
-            (user_id,)
+            "UPDATE users SET has_used_discount = 1 WHERE user_id = ?", (user_id,)
         )
         self.conn.commit()
         return True
@@ -658,25 +686,26 @@ class Database:
     def get_subscription_stats(self):
         """Get subscription statistics."""
         cursor = self.conn.cursor()
-        
+
         stats = {}
         for tariff_id, tariff in TARIFFS.items():
             cursor.execute(
                 "SELECT COUNT(*) as count FROM subscriptions WHERE tariff_id = ? AND status = 'active'",
-                (tariff_id,)
+                (tariff_id,),
             )
             row = cursor.fetchone()
             stats[tariff_id] = {
                 "name": tariff["name"],
                 "active_count": row["count"] if row else 0,
             }
-        
+
         return stats
 
     def _parse_speed(self, speed_str):
         """Parse speed string to get numeric value."""
         import re
-        match = re.search(r'(\d+)', speed_str)
+
+        match = re.search(r"(\d+)", speed_str)
         if match:
             return float(match.group(1))
         return 50.0  # default
@@ -688,7 +717,7 @@ class Database:
             self.conn = None
 
     # ===== PROMO CODES METHODS =====
-    
+
     def create_promo_code(
         self,
         code,
@@ -721,7 +750,7 @@ class Database:
                 activation_text,
                 is_idempotent,
                 is_active,
-            )
+            ),
         )
         self.conn.commit()
         promo_id = cursor.lastrowid
@@ -733,7 +762,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT * FROM promo_codes WHERE UPPER(code) = ? AND is_active = 1",
-            (code.upper(),)
+            (code.upper(),),
         )
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -749,7 +778,9 @@ class Database:
         """List all promo codes."""
         cursor = self.conn.cursor()
         if active_only:
-            cursor.execute("SELECT * FROM promo_codes WHERE is_active = 1 ORDER BY created_at DESC")
+            cursor.execute(
+                "SELECT * FROM promo_codes WHERE is_active = 1 ORDER BY created_at DESC"
+            )
         else:
             cursor.execute("SELECT * FROM promo_codes ORDER BY created_at DESC")
         return [dict(row) for row in cursor.fetchall()]
@@ -758,7 +789,7 @@ class Database:
         """Update promo code fields."""
         if not fields:
             return False
-        
+
         # Build dynamic update query
         set_clauses = []
         params = []
@@ -767,18 +798,19 @@ class Database:
                 value = value.upper()
             set_clauses.append(f"{key} = ?")
             params.append(value)
-        
+
         params.append(promo_id)
-        
+
         cursor = self.conn.cursor()
         cursor.execute(
-            f"UPDATE promo_codes SET {', '.join(set_clauses)} WHERE id = ?",
-            params
+            f"UPDATE promo_codes SET {', '.join(set_clauses)} WHERE id = ?", params
         )
         self.conn.commit()
-        
+
         if cursor.rowcount > 0:
-            logger.info(f"Updated promo code id={promo_id} with fields: {list(fields.keys())}")
+            logger.info(
+                f"Updated promo code id={promo_id} with fields: {list(fields.keys())}"
+            )
             return True
         return False
 
@@ -787,7 +819,7 @@ class Database:
         cursor = self.conn.cursor()
         cursor.execute("UPDATE promo_codes SET is_active = 0 WHERE id = ?", (promo_id,))
         self.conn.commit()
-        
+
         if cursor.rowcount > 0:
             logger.info(f"Deleted promo code id={promo_id}")
             return True
@@ -795,7 +827,7 @@ class Database:
 
     def activate_promo_code(self, user_id, code):
         """Activate a promo code for a user.
-        
+
         Returns dict with:
         - success: bool
         - error: str (if failed)
@@ -806,76 +838,85 @@ class Database:
         promo = self.get_promo_code_by_code(code)
         if not promo:
             return {"success": False, "error": "Похоже такого промокода не существует"}
-        
+
         # Check if active
         if not promo.get("is_active", 1):
-            return {"success": False, "error": "Похоже этот промокод уже недействителен"}
-        
+            return {
+                "success": False,
+                "error": "Похоже этот промокод уже недействителен",
+            }
+
         # Check validity period
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         valid_from = promo.get("valid_from")
         valid_until = promo.get("valid_until")
-        
+
         if valid_from:
             valid_from_dt = datetime.fromisoformat(valid_from)
             if now < valid_from_dt:
                 return {"success": False, "error": "Промокод еще не активен"}
-        
+
         if valid_until:
             valid_until_dt = datetime.fromisoformat(valid_until)
             if now > valid_until_dt:
-                return {"success": False, "error": "Похоже этот промокод уже недействителен"}
-        
+                return {
+                    "success": False,
+                    "error": "Похоже этот промокод уже недействителен",
+                }
+
         # Check max activations
         if promo.get("current_activations", 0) >= promo.get("max_activations", 1):
             return {"success": False, "error": "Промокод исчерпал лимит активаций"}
-        
+
         # Check idempotency
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT id FROM promo_activations WHERE promo_code_id = ? AND user_id = ?",
-            (promo["id"], user_id)
+            (promo["id"], user_id),
         )
         existing = cursor.fetchone()
-        
+
         if not promo.get("is_idempotent", 0) and existing:
             return {"success": False, "error": "Вы уже активировали этот промокод"}
-        
+
         # Check tariff restrictions
         applicable_tariffs = promo.get("applicable_tariffs")
         if applicable_tariffs:
             import json
+
             try:
                 tariffs = json.loads(applicable_tariffs)
                 if tariffs:  # non-empty list means restricted
                     # This check should be done at subscription creation time
                     # For now, we'll just note that promo is restricted
                     pass
-            except:
+            except (json.JSONDecodeError, TypeError):
                 pass
-        
+
         # Create activation record
         cursor.execute(
             "INSERT INTO promo_activations (promo_code_id, user_id) VALUES (?, ?)",
-            (promo["id"], user_id)
+            (promo["id"], user_id),
         )
         activation_id = cursor.lastrowid
-        
+
         # Increment activation counter
         cursor.execute(
             "UPDATE promo_codes SET current_activations = current_activations + 1 WHERE id = ?",
-            (promo["id"],)
+            (promo["id"],),
         )
-        
+
         self.conn.commit()
-        
-        logger.info(f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}")
-        
+
+        logger.info(
+            f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}"
+        )
+
         return {
             "success": True,
             "promo": promo,
             "activation_id": activation_id,
-            "message": "Промокод успешно активирован"
+            "message": "Промокод успешно активирован",
         }
 
     def get_promo_activations(self, promo_code_id):
@@ -887,43 +928,43 @@ class Database:
                LEFT JOIN users u ON pa.user_id = u.user_id
                WHERE pa.promo_code_id = ?
                ORDER BY pa.activated_at DESC""",
-            (promo_code_id,)
+            (promo_code_id,),
         )
         return [dict(row) for row in cursor.fetchall()]
 
     def cleanup_expired_promos(self, days_grace=1):
         """Delete promos expired more than days_grace days ago."""
         from datetime import datetime, timedelta
-        
-        cutoff_date = datetime.now() - timedelta(days=days_grace)
-        
+
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_grace)
+
         cursor = self.conn.cursor()
         cursor.execute(
             "DELETE FROM promo_codes WHERE valid_until < ? AND is_active = 1",
-            (cutoff_date.isoformat(),)
+            (cutoff_date.isoformat(),),
         )
         deleted_count = cursor.rowcount
         self.conn.commit()
-        
+
         if deleted_count > 0:
             logger.info(f"Cleaned up {deleted_count} expired promo codes")
-        
+
         return {"deleted_count": deleted_count}
 
     def populate_missing_panel_subscription_ids(self, xcontroller_client):
         """
         Populate missing panel_subscription_id for existing subscriptions.
-        
+
         Queries X-Controller for subscriptions matching user emails and updates local DB.
-        
+
         Args:
             xcontroller_client: Instance of XControllerClient
-            
+
         Returns:
             Dict with stats: updated_count, failed_count, errors
         """
         cursor = self.conn.cursor()
-        
+
         # Find subscriptions with missing panel_subscription_id but with panel_sub_token
         cursor.execute("""
             SELECT id, user_id, panel_sub_token, tariff_id 
@@ -933,60 +974,81 @@ class Database:
             AND status = 'active'
         """)
         subs_to_update = cursor.fetchall()
-        
+
         if not subs_to_update:
             logger.info("No subscriptions missing panel_subscription_id")
             return {"updated_count": 0, "failed_count": 0, "errors": []}
-        
-        logger.info(f"Found {len(subs_to_update)} subscriptions missing panel_subscription_id")
-        
+
+        logger.info(
+            f"Found {len(subs_to_update)} subscriptions missing panel_subscription_id"
+        )
+
         # Get all subscriptions from X-Controller
         try:
             xc_result = xcontroller_client.list_subscriptions()
-            xc_subs = xc_result if isinstance(xc_result, list) else xc_result.get("subscriptions", [])
-            
+            xc_subs = (
+                xc_result
+                if isinstance(xc_result, list)
+                else xc_result.get("subscriptions", [])
+            )
+        except (
+            requests.RequestException,
+            ValueError,
+            xcontroller_client.XControllerError,
+        ) as e:
+            logger.error(f"Failed to fetch subscriptions from X-Controller: {e}")
+            return {
+                "updated_count": 0,
+                "failed_count": len(subs_to_update),
+                "errors": [str(e)],
+            }
+
             # Build lookup by sub_token
-            xc_by_token = {sub.get("sub_token"): sub for sub in xc_subs if sub.get("sub_token")}
-            
+            xc_by_token = {
+                sub.get("sub_token"): sub for sub in xc_subs if sub.get("sub_token")
+            }
+
             updated = 0
             failed = 0
             errors = []
-            
+
             for sub in subs_to_update:
                 sub_id = sub["id"]
                 token = sub["panel_sub_token"]
-                
+
                 xc_sub = xc_by_token.get(token)
                 if xc_sub and xc_sub.get("id"):
                     try:
                         cursor.execute(
                             "UPDATE subscriptions SET panel_subscription_id = ? WHERE id = ?",
-                            (xc_sub["id"], sub_id)
+                            (xc_sub["id"], sub_id),
                         )
                         updated += 1
-                        logger.info(f"Updated subscription {sub_id} with panel_subscription_id={xc_sub['id']}")
-                    except Exception as e:
+                        logger.info(
+                            f"Updated subscription {sub_id} with panel_subscription_id={xc_sub['id']}"
+                        )
+                    except (sqlite3.Error, ValueError) as e:
                         failed += 1
                         errors.append(f"sub_id={sub_id}: {e}")
                         logger.error(f"Failed to update subscription {sub_id}: {e}")
                 else:
                     failed += 1
-                    errors.append(f"sub_id={sub_id}: not found in X-Controller (token={token})")
-                    logger.warning(f"Subscription {sub_id} (token={token}) not found in X-Controller")
-            
+                    errors.append(
+                        f"sub_id={sub_id}: not found in X-Controller (token={token})"
+                    )
+                    logger.warning(
+                        f"Subscription {sub_id} (token={token}) not found in X-Controller"
+                    )
+
             self.conn.commit()
-            
+
             result = {
                 "updated_count": updated,
                 "failed_count": failed,
-                "errors": errors
+                "errors": errors,
             }
             logger.info(f"Populate panel_subscription_id complete: {result}")
             return result
-            
-        except Exception as e:
-            logger.error(f"Failed to fetch subscriptions from X-Controller: {e}")
-            return {"updated_count": 0, "failed_count": len(subs_to_update), "errors": [str(e)]}
 
 
 # Global database instance

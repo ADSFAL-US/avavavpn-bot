@@ -1,5 +1,4 @@
 import unittest
-from datetime import datetime
 
 from subscription_service import SubscriptionService
 from xcontroller_client import XControllerAPIError
@@ -66,7 +65,12 @@ class DummyXC:
         if self.create_success:
             return {
                 "success": True,
-                "subscription": {"id": 77, "sub_token": "tok-1", "uuid": "u1", "email": "user@example.com"},
+                "subscription": {
+                    "id": 77,
+                    "sub_token": "tok-1",
+                    "uuid": "u1",
+                    "email": "user@example.com",
+                },
             }
         return {"success": False, "error": "panel denied"}
 

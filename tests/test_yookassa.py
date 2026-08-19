@@ -12,17 +12,25 @@ class YooKassaTests(unittest.TestCase):
     @patch("yookassa.requests.post")
     def test_create_payment_returns_success(self, post_mock):
         post_mock.return_value.raise_for_status.return_value = None
-        post_mock.return_value.json.return_value = {"status": "pending", "id": "pay_1", "confirmation": {"confirmation_url": "https://pay.test"}}
+        post_mock.return_value.json.return_value = {
+            "status": "pending",
+            "id": "pay_1",
+            "confirmation": {"confirmation_url": "https://pay.test"},
+        }
 
         client = yookassa.YooKassaAPI("shop", "key")
-        result = client.create_payment(amount=99, description="test", user_id=1, tariff_id="basic")
+        result = client.create_payment(
+            amount=99, description="test", user_id=1, tariff_id="basic"
+        )
 
         self.assertTrue(result["success"])
         self.assertEqual(result["payment_id"], "pay_1")
 
     def test_create_payment_rejects_non_positive_amount(self):
         client = yookassa.YooKassaAPI("shop", "key")
-        result = client.create_payment(amount=0, description="test", user_id=1, tariff_id="basic")
+        result = client.create_payment(
+            amount=0, description="test", user_id=1, tariff_id="basic"
+        )
         self.assertFalse(result["success"])
         self.assertIn("greater", result["error"])
 

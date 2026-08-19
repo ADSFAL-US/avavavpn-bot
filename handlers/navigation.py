@@ -1,43 +1,57 @@
 # handlers/navigation.py — Main menu navigation, tariffs, subscriptions, referral
 import logging
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from database import db, TARIFFS
 import app_context
-from utils import (
-    safe_date_format, btn, back_btn,
-)
+from database import TARIFFS, db
+from handlers.monitoring import _get_panel_statuses
 from keyboards import (
-    build_main_menu, build_tariffs_menu, build_tariff_detail,
-    build_subscription_view, build_referral_menu, build_use_days_menu,
+    build_main_menu,
+    build_referral_menu,
+    build_subscription_view,
+    build_tariff_detail,
+    build_tariffs_menu,
+    build_use_days_menu,
     build_user_node_status,
 )
-from handlers.monitoring import _get_panel_statuses
+from utils import (
+    back_btn,
+    btn,
+    safe_date_format,
+)
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def handle_main_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
     query = update.callback_query
     text, markup = build_main_menu(user_id)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
 
-async def handle_menu_tariffs(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def handle_menu_tariffs(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
     query = update.callback_query
     text, markup = build_tariffs_menu()
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
 
-async def handle_menu_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def handle_menu_subscription(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
     query = update.callback_query
     text, markup = build_subscription_view(user_id)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
 
-async def handle_menu_support(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def handle_menu_support(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
     query = update.callback_query
     text = (
         "🛠 <b>Поддержка Avava VPN</b>\n\n"
@@ -46,13 +60,21 @@ async def handle_menu_support(update: Update, context: ContextTypes.DEFAULT_TYPE
         "👇 Нажмите кнопку ниже, чтобы открыть чат."
     )
     keyboard = [
-        [InlineKeyboardButton("📨 Открыть чат поддержки", url="https://t.me/+2I6sevlNpo5mMjcy")],
+        [
+            InlineKeyboardButton(
+                "📨 Открыть чат поддержки", url="https://t.me/+2I6sevlNpo5mMjcy"
+            )
+        ],
         [back_btn()],
     ]
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(
+        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
-async def handle_menu_referral(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def handle_menu_referral(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
     query = update.callback_query
     text, markup = build_referral_menu(user_id)
     try:
@@ -64,19 +86,25 @@ async def handle_menu_referral(update: Update, context: ContextTypes.DEFAULT_TYP
             raise
 
 
-async def handle_use_days_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def handle_use_days_menu(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
     query = update.callback_query
     text, markup = build_use_days_menu(user_id)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
 
-async def handle_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, tariff_id: str):
+async def handle_tariff(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, tariff_id: str
+):
     query = update.callback_query
     text, markup = build_tariff_detail(tariff_id, user_id)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
 
-async def handle_get_link(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str):
+async def handle_get_link(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str
+):
     query = update.callback_query
     try:
         sid = int(sub_id)
@@ -97,14 +125,20 @@ async def handle_get_link(update: Update, context: ContextTypes.DEFAULT_TYPE, us
                 "Скопируйте ссылку и импортируйте в приложение VPN."
             )
             keyboard = [[btn("📊 Моя подписка", "menu_subscription"), back_btn()]]
-            await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(
+                text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         else:
-            await query.edit_message_text("❌ Ссылка не найдена. Возможно, подписка неактивна.")
+            await query.edit_message_text(
+                "❌ Ссылка не найдена. Возможно, подписка неактивна."
+            )
     except ValueError:
         await query.edit_message_text("❌ Ошибка ID подписки")
 
 
-async def handle_confirm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str):
+async def handle_confirm_cancel(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str
+):
     query = update.callback_query
     text = (
         "⚠️ <b>Отменить подписку?</b>\n\n"
@@ -114,10 +148,14 @@ async def handle_confirm_cancel(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [
         [btn("✅ Да, отменить", f"cancel_{sub_id}"), btn("❌ Нет", "menu_subscription")]
     ]
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(
+        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
-async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str):
+async def handle_cancel(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str
+):
     query = update.callback_query
     try:
         sid = int(sub_id)
@@ -136,11 +174,15 @@ async def handle_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE, user
     except ValueError:
         text = "❌ Ошибка ID подписки"
 
-    keyboard = [[btn("📋 Тарифы", "menu_tariffs"), btn("📊 Подписка", "menu_subscription")]]
+    keyboard = [
+        [btn("📋 Тарифы", "menu_tariffs"), btn("📊 Подписка", "menu_subscription")]
+    ]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def handle_use_days_apply(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str):
+async def handle_use_days_apply(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, sub_id: str
+):
     query = update.callback_query
     try:
         sid = int(sub_id)
@@ -168,21 +210,24 @@ async def handle_use_days_apply(update: Update, context: ContextTypes.DEFAULT_TY
         # Extend subscription via SubscriptionManager (local DB + x-controller + panels)
         result = app_context.subscription_manager.extend_subscription(sid, days_to_add)
         if not result.get("success"):
-            logger.warning(f"Referral days extension sync failed: {result.get('error')}")
+            logger.warning(
+                f"Referral days extension sync failed: {result.get('error')}"
+            )
             if result.get("manual_action_required"):
                 logger.warning("Extension requires manual follow-up")
 
         # Reset referral days
         cursor = db.conn.cursor()
         cursor.execute(
-            "UPDATE users SET referral_days = 0 WHERE user_id = ?",
-            (user_id,)
+            "UPDATE users SET referral_days = 0 WHERE user_id = ?", (user_id,)
         )
         db.conn.commit()
 
         # Refresh data to show new ends_at
         updated_sub = db.get_subscription_by_id(sid)
-        new_ends = safe_date_format(updated_sub.get("ends_at")) if updated_sub else "N/A"
+        new_ends = (
+            safe_date_format(updated_sub.get("ends_at")) if updated_sub else "N/A"
+        )
 
         await query.edit_message_text(
             f"✅ <b>Дни применены!</b>\n\n"
@@ -191,18 +236,22 @@ async def handle_use_days_apply(update: Update, context: ContextTypes.DEFAULT_TY
             f"➕ Добавлено к подписке: <b>{days_to_add}</b> дней\n"
             f"⏱ Новая дата окончания: <b>{new_ends}</b>",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [btn("📊 Моя подписка", "menu_subscription")],
-                [btn("👥 Реферальная система", "menu_referral")],
-            ])
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [btn("📊 Моя подписка", "menu_subscription")],
+                    [btn("👥 Реферальная система", "menu_referral")],
+                ]
+            ),
         )
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error(f"Error using referral days: {e}")
         await query.edit_message_text("❌ Ошибка при использовании дней")
 
 
-async def handle_user_node_status(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def handle_user_node_status(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
     """Show simple node status for regular users."""
     query = update.callback_query
 

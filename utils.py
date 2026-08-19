@@ -1,12 +1,11 @@
 """Utility functions and constants for Avava VPN Bot."""
+
 import logging
-from datetime import datetime, timedelta
 
 from telegram import (
-    Update,
+    ChatMember,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ChatMember,
 )
 from telegram.error import BadRequest
 
@@ -90,17 +89,19 @@ async def check_channel_subscription(user_id: int, context) -> bool:
 
     try:
         member = await context.bot.get_chat_member(chat_id=channel, user_id=user_id)
-        if member.status in (ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER):
+        if member.status in (
+            ChatMember.MEMBER,
+            ChatMember.ADMINISTRATOR,
+            ChatMember.OWNER,
+        ):
             context.user_data["channel_verified"] = True
             return True
         return False
     except BadRequest as e:
         err_msg = str(e).lower()
         logger.info("BadRequest checking subscription for user %s: %s", user_id, e)
-        if "user not found" in err_msg or "not found" in err_msg:
-            return False
-        return True
-    except Exception as e:
+        return not ("user not found" in err_msg or "not found" in err_msg)
+    except Exception as e:  # noqa: BLE001
         logger.warning("Channel subscription check failed for user %s: %s", user_id, e)
         return True  # grace — don't block on errors
 
@@ -112,11 +113,15 @@ def build_subscription_prompt() -> tuple[str, InlineKeyboardMarkup]:
         text = (
             "🚫 <b>Подпишитесь на канал</b>\n\n"
             f"Для использования бота необходимо быть подписанным на наш канал "
-            f"<a href=\"https://t.me/{channel.lstrip('@')}\">{channel}</a>.\n\n"
+            f'<a href="https://t.me/{channel.lstrip("@")}">{channel}</a>.\n\n'
             "👇 Перейдите по ссылке ниже, подпишитесь, а затем отправьте <b>любое сообщение</b> боту."
         )
         keyboard = [
-            [InlineKeyboardButton("🔗 Перейти к каналу", url=f"https://t.me/{channel.lstrip('@')}")],
+            [
+                InlineKeyboardButton(
+                    "🔗 Перейти к каналу", url=f"https://t.me/{channel.lstrip('@')}"
+                )
+            ],
         ]
     else:
         text = (

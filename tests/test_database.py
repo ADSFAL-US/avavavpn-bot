@@ -2,11 +2,10 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime
 
 sys.modules.pop("database", None)
 
-from database import Database, TARIFFS
+from database import Database
 
 
 class DatabaseTests(unittest.TestCase):

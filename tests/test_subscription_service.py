@@ -52,11 +52,25 @@ class DummyXC:
         self.deleted = []
         self.health_ok = health_ok
 
-    def create_user_subscription(self, telegram_user_id, tariff, preset_id=None, expiry_days=None):
-        self.created.append({"user_id": telegram_user_id, "tariff": tariff, "preset_id": preset_id, "expiry_days": expiry_days})
+    def create_user_subscription(
+        self, telegram_user_id, tariff, preset_id=None, expiry_days=None
+    ):
+        self.created.append(
+            {
+                "user_id": telegram_user_id,
+                "tariff": tariff,
+                "preset_id": preset_id,
+                "expiry_days": expiry_days,
+            }
+        )
         return {
             "success": True,
-            "subscription": {"id": 99, "sub_token": "abc123", "uuid": "uuid-1", "email": "user@example.com"},
+            "subscription": {
+                "id": 99,
+                "sub_token": "abc123",
+                "uuid": "uuid-1",
+                "email": "user@example.com",
+            },
         }
 
     def health_check(self):
