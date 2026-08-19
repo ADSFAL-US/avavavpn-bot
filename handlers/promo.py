@@ -14,24 +14,8 @@ logger = logging.getLogger(__name__)
 async def handle_promo_activate(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    """Handle promo code activation."""
-    query = update.callback_query
-
-    # Check if user provided a code via callback data
-    if query.data == "promo_activate":
-        # Show input prompt
-        context.user_data["state"] = STATE_PROMO_CODE
-        text = (
-            "🎁 <b>Активировать промокод</b>\n\n"
-            "Введите промокод (буквы и цифры, без пробелов):"
-        )
-        keyboard = [[back_btn("main_menu")]]
-        await query.edit_message_text(
-            text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
-
-    # Handle text input for promo code
+    """Handle promo code activation from text input."""
+    # Handle text input for promo code (when user types the code)
     if context.user_data.get("state") == STATE_PROMO_CODE:
         code = update.message.text.strip().upper()
         context.user_data["state"] = None  # Reset state
@@ -71,16 +55,19 @@ async def handle_promo_activate(
 async def handle_promo_menu(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    """Show promo activation menu."""
+    """Show promo activation menu - directly prompt for code input."""
     query = update.callback_query
+
+    # Set state to wait for promo code input
+    context.user_data["state"] = STATE_PROMO_CODE
 
     text = (
         "🎁 <b>Активировать промокод</b>\n\n"
-        "Введите промокод для получения скидки или бесплатных дней.\n\n"
+        "Введите промокод (буквы и цифры, без пробелов):\n\n"
         "💡 Пример: SAVE20, VPN15, или любой другой промокод"
     )
 
-    keyboard = [[btn("📝 Ввести промокод", "promo_activate")], [back_btn("main_menu")]]
+    keyboard = [[back_btn("main_menu")]]
 
     await query.edit_message_text(
         text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
