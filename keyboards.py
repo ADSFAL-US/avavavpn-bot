@@ -343,8 +343,7 @@ def build_admin_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         [btn("📊 Статистика", "admin_stats"), btn("👥 Пользователи", "admin_users")],
         [btn("📋 Подписки", "admin_subscriptions"), btn("🔍 Найти", "admin_find")],
         [btn("🎁 Выдать подписку", "admin_give_subscription")],
-        [btn("📝 Логи", "admin_logs")],
-        [btn("🧪 Симуляция реферала", "admin_simulate_referral")],
+        [btn("📝 Логи", "admin_logs")],        [btn("🎁 Промокоды", "admin_promos")],        [btn("🧪 Симуляция реферала", "admin_simulate_referral")],
         [btn("� Мониторинг панелей", "monitor_menu")],
         [btn("�🔙 В меню", "main_menu")],
     ]
