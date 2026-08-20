@@ -270,8 +270,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         if context.user_data.get("admin_promo_create"):
-            # Admin is creating a promo code - delegate to admin handler
-            context.user_data["admin_promo_create"] = False
+            # Admin is creating a promo code - delegate to admin handler.
+            # NOTE: do NOT clear admin_promo_create here — the handler checks it
+            # and it must remain True for subsequent creation steps.
             await handle_admin_promo_create_code(update, context, update.effective_user.id)
             return
 
