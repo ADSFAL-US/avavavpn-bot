@@ -1,0 +1,17 @@
+# Testing dependencies for Avava VPN Bot
+# Install with: pip install -r requirements-test.txt
+
+# Coverage testing
+coverage>=7.0.0
+
+# Mutation testing
+mutmut>=2.4.0
+
+# Optional: pytest for alternative test runner
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+
+# Optional: Additional linting tools
+# mypy>=1.0.0
+# black>=23.0.0
+# isort>=5.12.0

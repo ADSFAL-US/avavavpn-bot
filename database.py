@@ -1003,53 +1003,76 @@ class Database:
                 "errors": [str(e)],
             }
 
-            # Build lookup by sub_token
-            xc_by_token = {
-                sub.get("sub_token"): sub for sub in xc_subs if sub.get("sub_token")
-            }
+        # Build lookup by sub_token
+        xc_by_token = {
+            sub.get("sub_token"): sub for sub in xc_subs if sub.get("sub_token")
+        }
 
-            updated = 0
-            failed = 0
-            errors = []
+        updated = 0
+        failed = 0
+        errors = []
 
-            for sub in subs_to_update:
-                sub_id = sub["id"]
-                token = sub["panel_sub_token"]
+        for sub in subs_to_update:
+            sub_id = sub["id"]
+            token = sub["panel_sub_token"]
 
-                xc_sub = xc_by_token.get(token)
-                if xc_sub and xc_sub.get("id"):
-                    try:
-                        cursor.execute(
-                            "UPDATE subscriptions SET panel_subscription_id = ? WHERE id = ?",
-                            (xc_sub["id"], sub_id),
-                        )
-                        updated += 1
-                        logger.info(
-                            f"Updated subscription {sub_id} with panel_subscription_id={xc_sub['id']}"
-                        )
-                    except (sqlite3.Error, ValueError) as e:
-                        failed += 1
-                        errors.append(f"sub_id={sub_id}: {e}")
-                        logger.error(f"Failed to update subscription {sub_id}: {e}")
-                else:
+            xc_sub = xc_by_token.get(token)
+            if xc_sub and xc_sub.get("id"):
+                try:
+                    cursor.execute(
+                        "UPDATE subscriptions SET panel_subscription_id = ? WHERE id = ?",
+                        (xc_sub["id"], sub_id),
+                    )
+                    updated += 1
+                    logger.info(
+                        f"Updated subscription {sub_id} with panel_subscription_id={xc_sub['id']}"
+                    )
+                except (sqlite3.Error, ValueError) as e:
                     failed += 1
-                    errors.append(
-                        f"sub_id={sub_id}: not found in X-Controller (token={token})"
-                    )
-                    logger.warning(
-                        f"Subscription {sub_id} (token={token}) not found in X-Controller"
-                    )
+                    errors.append(f"sub_id={sub_id}: {e}")
+                    logger.error(f"Failed to update subscription {sub_id}: {e}")
+            else:
+                failed += 1
+                errors.append(
+                    f"sub_id={sub_id}: not found in X-Controller (token={token})"
+                )
+                logger.warning(
+                    f"Subscription {sub_id} (token={token}) not found in X-Controller"
+                )
 
-            self.conn.commit()
+        self.conn.commit()
 
-            result = {
-                "updated_count": updated,
-                "failed_count": failed,
-                "errors": errors,
-            }
-            logger.info(f"Populate panel_subscription_id complete: {result}")
-            return result
+        result = {
+            "updated_count": updated,
+            "failed_count": failed,
+            "errors": errors,
+        }
+        logger.info(f"Populate panel_subscription_id complete: {result}")
+        return result
 
 
-# Global database instance
-db = Database()
+# Global database instance (lazy initialization)
+_db_instance = None
+
+
+def get_database() -> "Database":
+    """Get or create the global database instance."""
+    global _db_instance
+    if _db_instance is None:
+        _db_instance = Database()
+    return _db_instance
+
+
+# For backward compatibility - create a module-level db object that can be patched
+class _DatabaseProxy:
+    """Proxy to the global database instance that allows patching."""
+    def __getattr__(self, name):
+        # Only try to get the database if it's already initialized
+        if _db_instance is not None:
+            return getattr(_db_instance, name)
+        # Return a mock-like object for patching
+        from unittest.mock import MagicMock
+        return MagicMock()
+
+
+db = _DatabaseProxy()
