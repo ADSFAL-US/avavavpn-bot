@@ -16,6 +16,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: avavavpn-bot-test
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - bot-network
+    depends_on:
+      - bot
+    command: python test_runner.py
+
 networks:
   bot-network:
     driver: bridge

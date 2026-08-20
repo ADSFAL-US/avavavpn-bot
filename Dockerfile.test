@@ -1,0 +1,31 @@
+# Test Dockerfile for Avava VPN Bot
+# Runs all tests in a containerized environment
+FROM python:3.11-alpine
+
+WORKDIR /app
+
+# Install system dependencies for testing
+RUN apk add --no-cache gcc musl-dev
+
+# Install production dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install test dependencies
+COPY requirements-test.txt .
+RUN pip install --no-cache-dir -r requirements-test.txt
+
+# Install linting tools
+RUN pip install --no-cache-dir ruff pylint
+
+# Copy all source code
+COPY *.py ./
+COPY setup.cfg ./
+COPY handlers/ ./handlers/
+COPY tests/ ./tests/
+
+# Create data directory
+RUN mkdir -p /app/data
+
+# Default command runs the test suite
+CMD ["python", "test_runner.py"]

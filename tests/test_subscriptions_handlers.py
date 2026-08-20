@@ -1,7 +1,7 @@
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.modules.pop("database", None)
 
@@ -48,8 +48,9 @@ class SubscriptionHandlerTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 subscriptions_handlers.app_context, "subscription_manager", manager
             ),
-            patch.object(subscriptions_handlers.db, "reward_referrer") as reward_mock,
+            patch.object(subscriptions_handlers, "db") as mock_db,
         ):
+            mock_db.reward_referrer = MagicMock()
             await subscriptions_handlers.handle_free_subscription(
                 update,
                 1,
@@ -57,7 +58,7 @@ class SubscriptionHandlerTests(unittest.IsolatedAsyncioTestCase):
                 {"name": "Trial", "speed": "50", "duration_days": 3, "preset_id": 1},
             )
 
-        reward_mock.assert_not_called()
+        mock_db.reward_referrer.assert_not_called()
         self.assertIn(
             "Ошибка активации", update.callback_query.edited_messages[0]["text"]
         )
@@ -74,8 +75,9 @@ class SubscriptionHandlerTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 subscriptions_handlers.app_context, "subscription_manager", manager
             ),
-            patch.object(subscriptions_handlers.db, "reward_referrer") as reward_mock,
+            patch.object(subscriptions_handlers, "db") as mock_db,
         ):
+            mock_db.reward_referrer = MagicMock()
             await subscriptions_handlers.handle_free_subscription(
                 update,
                 1,
@@ -83,7 +85,7 @@ class SubscriptionHandlerTests(unittest.IsolatedAsyncioTestCase):
                 {"name": "Trial", "speed": "50", "duration_days": 3, "preset_id": 1},
             )
 
-        reward_mock.assert_called_once_with(1, "trial")
+        mock_db.reward_referrer.assert_called_once_with(1, "trial")
         self.assertIn(
             "Подписка активирована", update.callback_query.edited_messages[0]["text"]
         )

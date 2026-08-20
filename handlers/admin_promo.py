@@ -377,6 +377,137 @@ async def handle_admin_promo_edit(
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
 
+async def handle_admin_promo_edit_field(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str, field: str
+):
+    """Prompt admin to enter new value for a promo code field."""
+    query = update.callback_query
+    promo = db.get_promo_code_by_id(int(promo_id))
+    if not promo:
+        await query.edit_message_text(
+            "❌ Промокод не найден",
+            reply_markup=InlineKeyboardMarkup([[back_btn("admin_promos_list")]]),
+        )
+        return
+
+    field_labels = {
+        "code": "Код",
+        "discount_percent": "Скидка (%)",
+        "free_days": "Бесплатные дни",
+        "valid_from": "Дата начала (YYYY-MM-DD)",
+        "valid_until": "Дата окончания (YYYY-MM-DD)",
+        "max_activations": "Максимум активаций",
+        "applicable_tariffs": "Тарифы (через запятую или 'all')",
+        "activation_text": "Текст активации",
+        "is_idempotent": "Идемпотентность (да/нет)",
+        "is_active": "Статус (1/0)",
+    }
+
+    label = field_labels.get(field, field)
+    current_value = promo.get(field, "N/A")
+
+    context.user_data["state"] = f"admin_promo_edit_{field}"
+    context.user_data["admin_promo_edit_id"] = promo_id
+    context.user_data["admin_promo_edit_field"] = field
+
+    text = (
+        f"✏️ <b>Редактирование: {label}</b>\n\n"
+        f"Промокод: <code>{promo.get('code', 'N/A')}</code>\n"
+        f"Текущее значение: <code>{current_value}</code>\n\n"
+        f"Введите новое значение:"
+    )
+    keyboard = [[back_btn(f"admin_promo_edit_{promo_id}")]]
+    await query.edit_message_text(
+        text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_admin_promo_edit_field_value(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
+):
+    """Handle the new value input for promo code field edit."""
+    state = context.user_data.get("state", "")
+    if not state.startswith("admin_promo_edit_"):
+        return
+
+    field = state.replace("admin_promo_edit_", "")
+    promo_id = context.user_data.get("admin_promo_edit_id")
+    if not promo_id:
+        await update.message.reply_text("❌ Ошибка: промокод не найден")
+        return
+
+    new_value = update.message.text.strip()
+    promo = db.get_promo_code_by_id(int(promo_id))
+    if not promo:
+        await update.message.reply_text("❌ Промокод не найден")
+        return
+
+    # Validate and convert based on field type
+    try:
+        if field in ["discount_percent", "free_days", "max_activations", "is_active"]:
+            new_value = int(new_value)
+            if field == "discount_percent" and (new_value < 0 or new_value > 100):
+                raise ValueError("Скидка должна быть от 0 до 100")
+            if field == "free_days" and new_value < 0:
+                raise ValueError("Дни не могут быть отрицательными")
+            if field == "max_activations" and new_value < 1:
+                raise ValueError("Максимум активаций должен быть больше 0")
+            if field == "is_active" and new_value not in [0, 1]:
+                raise ValueError("Статус должен быть 0 или 1")
+        elif field in ["valid_from", "valid_until"]:
+            if new_value.lower() in ["none", "null", ""]:
+                new_value = None
+            else:
+                from datetime import datetime, timezone
+                new_value = datetime.strptime(new_value, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+        elif field == "applicable_tariffs":
+            if new_value.lower() == "all":
+                new_value = None
+            else:
+                tariffs_list = [t.strip() for t in new_value.split(",") if t.strip()]
+                valid_tariffs = ["trial", "basic", "premium"]
+                for tariff in tariffs_list:
+                    if tariff not in valid_tariffs:
+                        raise ValueError(f"Неизвестный тариф: {tariff}")
+                import json
+                new_value = json.dumps(tariffs_list)
+        elif field == "is_idempotent":
+            if new_value.lower() in ["да", "yes", "true", "1"]:
+                new_value = 1
+            elif new_value.lower() in ["нет", "no", "false", "0"]:
+                new_value = 0
+            else:
+                raise ValueError("Ответьте 'да' или 'нет'")
+        elif field == "code":
+            new_value = new_value.upper()
+        # activation_text can be any string, including empty
+        if field == "activation_text" and not new_value:
+            new_value = None
+    except ValueError as e:
+        await update.message.reply_text(f"❌ {e}")
+        return
+
+    # Update the promo code
+    success = db.update_promo_code(int(promo_id), **{field: new_value})
+    if not success:
+        await update.message.reply_text("❌ Ошибка обновления")
+        return
+
+    # Clear state
+    context.user_data.pop("state", None)
+    context.user_data.pop("admin_promo_edit_id", None)
+    context.user_data.pop("admin_promo_edit_field", None)
+
+    # Show updated promo detail
+    promo = db.get_promo_code_by_id(int(promo_id))
+    _, markup = build_promo_detail(promo)
+    await update.message.reply_text(
+        "✅ Поле обновлено!\n\n",
+        parse_mode="HTML",
+        reply_markup=markup
+    )
+
+
 async def handle_admin_promo_delete(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str
 ):
@@ -440,7 +571,7 @@ async def handle_admin_promos_list(
 ):
     """Show list of all promo codes."""
     query = update.callback_query
-    promos = db.get_all_promo_codes()
+    promos = db.list_promo_codes(active_only=False)
     text, markup = build_promo_list(promos)
     await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
 
@@ -467,7 +598,7 @@ async def handle_admin_promo_stats(
 ):
     """Show promo codes statistics."""
     query = update.callback_query
-    promos = db.get_all_promo_codes()
+    promos = db.list_promo_codes(active_only=False)
     total_promos = len(promos)
     active_promos = sum(1 for p in promos if p.get("is_active", 1))
     total_activations = sum(p.get("current_activations", 0) for p in promos)

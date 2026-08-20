@@ -43,6 +43,8 @@ from handlers.admin_promo import (
     handle_admin_promo_delete,
     handle_admin_promo_detail,
     handle_admin_promo_edit,
+    handle_admin_promo_edit_field,
+    handle_admin_promo_edit_field_value,
     handle_admin_promo_find,
     handle_admin_promo_stats,
     handle_admin_promo_toggle_active,
@@ -272,6 +274,11 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # User is activating a promo code
         await handle_promo_activate(update, context, update.effective_user.id)
+        return
+
+    elif state.startswith("admin_promo_edit_"):
+        # Admin is editing a promo code field
+        await handle_admin_promo_edit_field_value(update, context, update.effective_user.id)
         return
 
     elif state == STATE_BAN_REASON:
@@ -644,6 +651,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Нет доступа")
             return
         await handle_admin_promo_detail(update, context, user_id, data[18:])
+    elif data.startswith("admin_promo_edit_field_"):
+        if not is_admin(user_id):
+            await query.edit_message_text("❌ Нет доступа")
+            return
+        # Format: admin_promo_edit_field_{promo_id}_{field}
+        parts = data.split("_", 4)
+        promo_id = parts[3]
+        field = parts[4]
+        await handle_admin_promo_edit_field(update, context, user_id, promo_id, field)
     elif data.startswith("admin_promo_edit_"):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
