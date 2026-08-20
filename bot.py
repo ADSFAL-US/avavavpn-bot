@@ -114,6 +114,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize database connection
+from database import get_database
+get_database()
+
 # ===== INITIALIZE CLIENTS =====
 # YooKassa payment client
 app_context.yookassa = None
