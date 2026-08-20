@@ -734,11 +734,11 @@ class Database:
         """Create a new promo code."""
         cursor = self.conn.cursor()
         cursor.execute(
-            """INSERT INTO promo_codes 
-               (code, discount_percent, free_days, valid_from, valid_until, 
-                max_activations, current_activations, applicable_tariffs, 
+            """INSERT INTO promo_codes
+               (code, discount_percent, free_days, valid_from, valid_until,
+                max_activations, current_activations, applicable_tariffs,
                 activation_text, is_idempotent, is_active)
-               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)""",
             (
                 code.upper(),
                 discount_percent,
