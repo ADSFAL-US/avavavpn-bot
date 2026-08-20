@@ -39,7 +39,15 @@ from handlers.admin import (
 from handlers.admin_promo import (
     handle_admin_promo_activations,
     handle_admin_promo_create_code,
+    handle_admin_promo_create_days,
+    handle_admin_promo_create_discount,
+    handle_admin_promo_create_idempotent,
+    handle_admin_promo_create_max_activations,
     handle_admin_promo_create_start,
+    handle_admin_promo_create_tariffs,
+    handle_admin_promo_create_text,
+    handle_admin_promo_create_valid_from,
+    handle_admin_promo_create_valid_until,
     handle_admin_promo_delete,
     handle_admin_promo_detail,
     handle_admin_promo_edit,
@@ -97,6 +105,14 @@ from utils import (
     STATE_FIND_USER,
     STATE_IDLE,
     STATE_PROMO_CODE,
+    STATE_PROMO_DAYS,
+    STATE_PROMO_DISCOUNT,
+    STATE_PROMO_IDEMPOTENT,
+    STATE_PROMO_MAX_ACTIVATIONS,
+    STATE_PROMO_TARIFFS,
+    STATE_PROMO_TEXT,
+    STATE_PROMO_VALID_FROM,
+    STATE_PROMO_VALID_UNTIL,
     STATE_SIMULATE_REFERRAL_USERID,
     back_btn,
     btn,
@@ -278,6 +294,38 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
         # User is activating a promo code
         await handle_promo_activate(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_DISCOUNT:
+        await handle_admin_promo_create_discount(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_DAYS:
+        await handle_admin_promo_create_days(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_VALID_FROM:
+        await handle_admin_promo_create_valid_from(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_VALID_UNTIL:
+        await handle_admin_promo_create_valid_until(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_MAX_ACTIVATIONS:
+        await handle_admin_promo_create_max_activations(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_TARIFFS:
+        await handle_admin_promo_create_tariffs(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_TEXT:
+        await handle_admin_promo_create_text(update, context, update.effective_user.id)
+        return
+
+    elif state == STATE_PROMO_IDEMPOTENT:
+        await handle_admin_promo_create_idempotent(update, context, update.effective_user.id)
         return
 
     elif state.startswith("admin_promo_edit_"):
