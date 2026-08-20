@@ -48,3 +48,13 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+mutants/
+.coverage
+logs/
+htmlcov/
+data/
+.venv/
+.ruff_cache/
+.pytest_cache/
+.github/

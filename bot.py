@@ -20,7 +20,7 @@ from telegram.ext import (
 
 import app_context
 import config
-from database import TARIFFS, db
+from database import TARIFFS, db, get_database
 from handlers.admin import (
     handle_admin_find,
     handle_admin_give_subscription,
@@ -115,7 +115,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Initialize database connection
-from database import get_database
 get_database()
 
 # ===== INITIALIZE CLIENTS =====
