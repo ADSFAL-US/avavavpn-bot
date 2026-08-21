@@ -144,12 +144,13 @@ class Database:
             cursor.execute(
                 "ALTER TABLE users ADD COLUMN pending_free_days INTEGER DEFAULT 0"
             )
-            cursor.execute("ALTER TABLE subscriptions ADD COLUMN panel_sub_token TEXT")
-            cursor.execute("ALTER TABLE subscriptions ADD COLUMN payment_id TEXT")
-            self.conn.commit()
-            logger.info("Migrated subscriptions table with panel fields")
-        except (sqlite3.Error, ValueError) as e:
-            logger.warning(f"Migration check error (may be already migrated): {e}")
+
+        # Ensure subscription table has required columns (they should exist from CREATE TABLE)
+        # But handle case where migration was skipped or DB was recreated
+        try:
+            cursor.execute("SELECT panel_sub_token FROM subscriptions LIMIT 1")
+        except sqlite3.OperationalError:
+            logger.warning("panel_sub_token column missing from subscriptions, expected if DB recreated")
 
         # Add test_configs_enabled column
         try:
