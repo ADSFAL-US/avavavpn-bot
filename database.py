@@ -95,7 +95,9 @@ class Database:
                 referral_days REAL DEFAULT 0,
                 referred_by INTEGER,
                 has_used_discount BOOLEAN DEFAULT 0,
-                has_rewarded_referrer BOOLEAN DEFAULT 0
+                has_rewarded_referrer BOOLEAN DEFAULT 0,
+                pending_discount_percent INTEGER DEFAULT 0,
+                pending_free_days INTEGER DEFAULT 0
             )
         """)
 
@@ -127,6 +129,20 @@ class Database:
         except sqlite3.OperationalError:
             cursor.execute(
                 "ALTER TABLE subscriptions ADD COLUMN panel_subscription_id INTEGER"
+            )
+
+        # Migration: add pending promo columns to users table if they don't exist
+        try:
+            cursor.execute("SELECT pending_discount_percent FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(
+                "ALTER TABLE users ADD COLUMN pending_discount_percent INTEGER DEFAULT 0"
+            )
+        try:
+            cursor.execute("SELECT pending_free_days FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute(
+                "ALTER TABLE users ADD COLUMN pending_free_days INTEGER DEFAULT 0"
             )
             cursor.execute("ALTER TABLE subscriptions ADD COLUMN panel_sub_token TEXT")
             cursor.execute("ALTER TABLE subscriptions ADD COLUMN payment_id TEXT")
@@ -409,6 +425,26 @@ class Database:
         if ends_at is None:
             ends_at = now + timedelta(days=tariff["duration_days"])
 
+        # Apply any pending promo from previous activation
+        pending_discount = 0
+        pending_free_days = 0
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT pending_discount_percent, pending_free_days FROM users WHERE user_id = ?",
+            (user_id,),
+        )
+        user_row = cursor.fetchone()
+        if user_row:
+            pending_discount = user_row["pending_discount_percent"] or 0
+            pending_free_days = user_row["pending_free_days"] or 0
+
+        # Clear pending promo after reading
+        cursor.execute(
+            "UPDATE users SET pending_discount_percent = 0, pending_free_days = 0 WHERE user_id = ?",
+            (user_id,),
+        )
+        self.conn.commit()
+
         if traffic_limit_mb is None and tariff["traffic_limit_gb"]:
             traffic_limit_mb = tariff["traffic_limit_gb"] * 1024  # GB to MB
 
@@ -419,6 +455,10 @@ class Database:
             warp_enabled = int(tariff["warp"])
         if test_configs_enabled is None:
             test_configs_enabled = int(tariff.get("test_configs", False))
+
+        # Apply pending free days to the subscription end date
+        if pending_free_days > 0:
+            ends_at = (ends_at or now) + timedelta(days=pending_free_days)
 
         cursor = self.conn.cursor()
         cursor.execute(
@@ -445,14 +485,16 @@ class Database:
 
         logger.info(
             f"Created subscription: id={subscription_id}, user={user_id}, "
-            f"tariff={tariff_id}, panel_id={panel_subscription_id}"
+            f"tariff={tariff_id}, panel_id={panel_subscription_id}, "
+            f"applied_discount={pending_discount}%, free_days={pending_free_days}"
         )
 
         return {
             "id": subscription_id,
             "status": "created",
             "panel_subscription_id": panel_subscription_id,
-            "panel_sub_token": panel_sub_token,
+            "applied_discount": pending_discount,
+            "applied_free_days": pending_free_days,
         }
 
     def cancel_subscription(self, subscription_id, user_id):
@@ -906,10 +948,17 @@ class Database:
             (promo["id"],),
         )
 
+        # Store pending promo on user for application on next subscription
+        cursor.execute(
+            "UPDATE users SET pending_discount_percent = ?, pending_free_days = ? WHERE user_id = ?",
+            (promo.get("discount_percent", 0), promo.get("free_days", 0), user_id),
+        )
+
         self.conn.commit()
 
         logger.info(
-            f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}"
+            f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}, "
+            f"pending_discount={promo.get('discount_percent', 0)}, pending_free_days={promo.get('free_days', 0)}"
         )
 
         return {

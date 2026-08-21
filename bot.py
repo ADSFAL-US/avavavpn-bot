@@ -702,7 +702,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
             return
-        await handle_admin_promo_detail(update, context, user_id, data[18:])
+        await handle_admin_promo_detail(update, context, user_id, data[19:])
     elif data.startswith("admin_promo_edit_field_"):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
@@ -716,12 +716,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
             return
-        await handle_admin_promo_edit(update, context, user_id, data[16:])
+        await handle_admin_promo_edit(update, context, user_id, data[17:])
     elif data.startswith("admin_promo_delete_"):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
             return
-        await handle_admin_promo_delete(update, context, user_id, data[17:])
+        await handle_admin_promo_delete(update, context, user_id, data[19:])
     elif data.startswith("admin_promo_activations_"):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
@@ -731,7 +731,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
             return
-        await handle_admin_promo_toggle_active(update, context, user_id, data[18:])
+        await handle_admin_promo_toggle_active(update, context, user_id, data[19:])
     elif data.startswith("ban_"):
         if not is_admin(user_id):
             await query.edit_message_text("❌ Нет доступа")
