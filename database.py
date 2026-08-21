@@ -426,25 +426,20 @@ class Database:
         if ends_at is None:
             ends_at = now + timedelta(days=tariff["duration_days"])
 
-        # Apply any pending promo from previous activation
+        # Read any pending promo from previous activation.
+        # NOTE: We do NOT clear pending_discount_percent / pending_free_days here —
+        # the discount is applied at invoice creation and cleared after successful payment.
+        # Free days are already in referral_days (added during activation), so they are
+        # handled by the referral system elsewhere, not by extending ends_at here.
         pending_discount = 0
-        pending_free_days = 0
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT pending_discount_percent, pending_free_days FROM users WHERE user_id = ?",
+            "SELECT pending_discount_percent FROM users WHERE user_id = ?",
             (user_id,),
         )
         user_row = cursor.fetchone()
         if user_row:
             pending_discount = user_row["pending_discount_percent"] or 0
-            pending_free_days = user_row["pending_free_days"] or 0
-
-        # Clear pending promo after reading
-        cursor.execute(
-            "UPDATE users SET pending_discount_percent = 0, pending_free_days = 0 WHERE user_id = ?",
-            (user_id,),
-        )
-        self.conn.commit()
 
         if traffic_limit_mb is None and tariff["traffic_limit_gb"]:
             traffic_limit_mb = tariff["traffic_limit_gb"] * 1024  # GB to MB
@@ -456,10 +451,6 @@ class Database:
             warp_enabled = int(tariff["warp"])
         if test_configs_enabled is None:
             test_configs_enabled = int(tariff.get("test_configs", False))
-
-        # Apply pending free days to the subscription end date
-        if pending_free_days > 0:
-            ends_at = (ends_at or now) + timedelta(days=pending_free_days)
 
         cursor = self.conn.cursor()
         cursor.execute(
@@ -487,7 +478,7 @@ class Database:
         logger.info(
             f"Created subscription: id={subscription_id}, user={user_id}, "
             f"tariff={tariff_id}, panel_id={panel_subscription_id}, "
-            f"applied_discount={pending_discount}%, free_days={pending_free_days}"
+            f"pending_discount={pending_discount}%"
         )
 
         return {
@@ -495,7 +486,7 @@ class Database:
             "status": "created",
             "panel_subscription_id": panel_subscription_id,
             "applied_discount": pending_discount,
-            "applied_free_days": pending_free_days,
+            "applied_free_days": 0,
         }
 
     def cancel_subscription(self, subscription_id, user_id):
@@ -681,6 +672,60 @@ class Database:
             self.set_discount_used(user_id)
 
         return True
+
+    def get_pending_discount(self, user_id):
+        """Return the current pending_discount_percent for a user without modifying it."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT pending_discount_percent FROM users WHERE user_id = ?", (user_id,)
+        )
+        row = cursor.fetchone()
+        return (row["pending_discount_percent"] or 0) if row else 0
+
+    def clear_pending_discount(self, user_id):
+        """Return the current pending_discount_percent and reset it to 0.
+
+        Used after successful payment to consume the accumulated promo discount.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT pending_discount_percent FROM users WHERE user_id = ?", (user_id,)
+        )
+        row = cursor.fetchone()
+        discount = (row["pending_discount_percent"] or 0) if row else 0
+
+        cursor.execute(
+            "UPDATE users SET pending_discount_percent = 0 WHERE user_id = ?", (user_id,)
+        )
+        self.conn.commit()
+        return discount
+
+    def apply_referral_days_to_subscription(self, subscription_id, user_id):
+        """Consume accumulated referral_days and extend the subscription by that amount.
+
+        Returns the number of days applied, or 0 if the user has no referral days
+        or no subscription.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT referral_days FROM users WHERE user_id = ?", (user_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return 0
+        referral_days = row["referral_days"] or 0
+        if referral_days <= 0:
+            return 0
+
+        # Consume the referral days
+        cursor.execute(
+            "UPDATE users SET referral_days = 0 WHERE user_id = ?", (user_id,)
+        )
+        self.conn.commit()
+
+        # Extend the subscription
+        self.extend_subscription(subscription_id, referral_days)
+        return referral_days
 
     def extend_subscription(self, subscription_id, extra_days):
         """Extend an existing subscription's ends_at by extra_days."""
@@ -939,7 +984,7 @@ class Database:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Execute all promo activation operations within a transaction
+        # Execute all promo activation operations within a single transaction
         try:
             self.conn.execute("BEGIN")
 
@@ -956,17 +1001,29 @@ class Database:
                 (promo["id"],),
             )
 
-            # Store pending promo on user for application on next subscription
-            cursor.execute(
-                "UPDATE users SET pending_discount_percent = ?, pending_free_days = ? WHERE user_id = ?",
-                (promo.get("discount_percent", 0), promo.get("free_days", 0), user_id),
-            )
+            # Apply discount: accumulate into pending_discount_percent (capped at 50%)
+            discount_percent = promo.get("discount_percent", 0) or 0
+            if discount_percent > 0:
+                cursor.execute(
+                    "UPDATE users SET pending_discount_percent = MIN(pending_discount_percent + ?, 50) WHERE user_id = ?",
+                    (discount_percent, user_id),
+                )
+
+            # Apply free_days: add to referral_days balance (not pending_free_days)
+            # NOTE: SQL executed directly here because add_referral_days() commits,
+            # which would break the outer transaction.
+            free_days = promo.get("free_days", 0) or 0
+            if free_days > 0:
+                cursor.execute(
+                    "UPDATE users SET referral_days = referral_days + ? WHERE user_id = ?",
+                    (free_days, user_id),
+                )
 
             self.conn.commit()
 
             logger.info(
                 f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}, "
-                f"pending_discount={promo.get('discount_percent', 0)}, pending_free_days={promo.get('free_days', 0)}"
+                f"pending_discount={discount_percent}, referral_days_added={free_days}"
             )
 
             return {

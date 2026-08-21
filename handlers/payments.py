@@ -112,6 +112,20 @@ async def handle_subscribe(
         discount = amount * 0.1
         amount -= discount
 
+    # Apply accumulated promo discount (from activated promo codes)
+    # Read via get_pending_discount so it is NOT consumed yet — it will be
+    # cleared only after the payment succeeds (see _process_successful_payment).
+    if tariff_id not in ["trial"]:
+        pending_discount = db.get_pending_discount(user_id)
+        if pending_discount > 0:
+            promo_discount = amount * (pending_discount / 100.0)
+            discount += promo_discount
+            amount -= promo_discount
+            logger.info(
+                f"Applied pending promo discount {pending_discount}% for user {user_id}: "
+                f"-{promo_discount:.2f} rub"
+            )
+
     # Create YooKassa payment
     order_id = f"avava_{user_id}_{tariff_id}_{uuid.uuid4().hex[:8]}"
 
@@ -333,6 +347,8 @@ async def handle_check_payment(
                     "❌ Ошибка продления подписки. Обратитесь в поддержку."
                 )
 
+            # Consume any accumulated promo discount after successful payment
+            db.clear_pending_discount(user_id)
             db.reward_referrer(user_id, payment_record.get("tariff_id", ""))
             return
 
@@ -356,6 +372,8 @@ async def handle_check_payment(
             )
             return
 
+        # Consume any accumulated promo discount after successful payment
+        db.clear_pending_discount(user_id)
         db.reward_referrer(user_id, tariff_id)
 
     check_result = app_context.yookassa.check_payment(payment_id)

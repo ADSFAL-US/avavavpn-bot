@@ -19,7 +19,14 @@ def make_fake_db():
     """Create a fresh fake database instance for handler tests."""
     class FakeDB:
         def __init__(self):
-            self.conn = SimpleNamespace(cursor=lambda: None)
+            # Simulate a minimal SQLite connection with cursor
+            self.conn = SimpleNamespace(
+                cursor=lambda: SimpleNamespace(
+                    execute=lambda *a, **k: None,
+                    fetchone=lambda: None,
+                    fetchall=lambda: [],
+                )
+            )
             self.promo_codes = {}
             self.next_promo_id = 1
             self.users = {}
@@ -57,14 +64,37 @@ def make_fake_db():
             if not promo:
                 return {"success": False, "error": "Promo not found"}
 
+            # Check if user has already activated this promo code (for all promos)
+            # This prevents SQL IntegrityError from the unique index on (promo_code_id, user_id)
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT id FROM promo_activations WHERE promo_code_id = ? AND user_id = ?",
+                (promo["id"], user_id),
+            )
+            existing = cursor.fetchone()
+
+            if existing:
+                return {"success": False, "error": "Вы уже активировали этот промокод"}
+
             # Store pending promo on user
             if user_id not in self.users:
                 self.users[user_id] = {
                     "pending_discount_percent": 0,
                     "pending_free_days": 0,
+                    "referral_days": 0,
                 }
-            self.users[user_id]["pending_discount_percent"] = promo.get("discount_percent", 0)
-            self.users[user_id]["pending_free_days"] = promo.get("free_days", 0)
+
+            # Apply discount: accumulate into pending_discount_percent (capped at 50%)
+            discount_percent = promo.get("discount_percent", 0) or 0
+            if discount_percent > 0:
+                self.users[user_id]["pending_discount_percent"] = min(
+                    self.users[user_id]["pending_discount_percent"] + discount_percent, 50
+                )
+
+            # Apply free_days: add to referral_days balance (not pending_free_days)
+            free_days = promo.get("free_days", 0) or 0
+            if free_days > 0:
+                self.users[user_id]["referral_days"] = self.users[user_id].get("referral_days", 0) + free_days
 
             return {
                 "success": True,
@@ -76,27 +106,34 @@ def make_fake_db():
         def create_subscription(self, user_id, tariff_id):
             """Create subscription and apply any stored pending promo."""
             pending_discount = 0
-            pending_free_days = 0
             cursor = self.conn.cursor()
             cursor.execute(
-                "SELECT pending_discount_percent, pending_free_days FROM users WHERE user_id = ?",
+                "SELECT pending_discount_percent FROM users WHERE user_id = ?",
                 (user_id,),
             )
             user_row = cursor.fetchone()
             if user_row:
                 pending_discount = user_row["pending_discount_percent"] or 0
-                pending_free_days = user_row["pending_free_days"] or 0
 
-            # Clear pending promo after reading
-            cursor.execute(
-                "UPDATE users SET pending_discount_percent = 0, pending_free_days = 0 WHERE user_id = ?",
-                (user_id,),
-            )
+            # NOTE: We do NOT clear pending_discount_percent here —
+            # the discount is applied at invoice creation and cleared after successful payment.
 
             return {
                 "applied_discount": pending_discount,
-                "applied_free_days": pending_free_days,
+                "applied_free_days": 0,
             }
+
+        def get_pending_discount(self, user_id):
+            """Return the current pending_discount_percent for a user without modifying it."""
+            user = self.users.get(user_id, {})
+            return user.get("pending_discount_percent", 0)
+
+        def clear_pending_discount(self, user_id):
+            """Return the current pending_discount_percent and reset it to 0."""
+            user = self.users.get(user_id, {})
+            discount = user.get("pending_discount_percent", 0)
+            user["pending_discount_percent"] = 0
+            return discount
 
     return FakeDB()
 
@@ -116,11 +153,13 @@ class TestPromoActivationStorage(unittest.TestCase):
         result = self.db.activate_promo_code(user_id=123, code="SAVE20")
 
         self.assertTrue(result["success"])
-        # User should have pending discount stored
+        # User should have pending discount stored (accumulated)
         user = self.db.users.get(123)
         self.assertIsNotNone(user)
         self.assertEqual(user["pending_discount_percent"], 20)
-        self.assertEqual(user["pending_free_days"], 3)
+        # Free days should be added to referral_days, not pending_free_days
+        self.assertEqual(user.get("referral_days", 0), 3)
+        self.assertEqual(user["pending_free_days"], 0)
 
     def test_activate_promo_stores_free_days(self):
         """Activate promo should store free_days on user."""
@@ -133,7 +172,9 @@ class TestPromoActivationStorage(unittest.TestCase):
         user = self.db.users.get(456)
         self.assertIsNotNone(user)
         self.assertEqual(user["pending_discount_percent"], 0)
-        self.assertEqual(user["pending_free_days"], 7)
+        # Free days should be added to referral_days, not pending_free_days
+        self.assertEqual(user.get("referral_days", 0), 7)
+        self.assertEqual(user["pending_free_days"], 0)
 
 
 class TestPromoApplicationOnSubscription(unittest.TestCase):
@@ -152,10 +193,10 @@ class TestPromoApplicationOnSubscription(unittest.TestCase):
 
         # Discount should be applied
         self.assertEqual(sub["applied_discount"], 25)
-        # Pending should be cleared
+        # Pending should NOT be cleared by create_subscription (cleared after payment)
         user = self.db.users.get(123)
         self.assertIsNotNone(user)
-        self.assertEqual(user["pending_discount_percent"], 0)
+        self.assertEqual(user["pending_discount_percent"], 25)
         self.assertEqual(user["pending_free_days"], 0)
 
     def test_create_subscription_applies_free_days(self):
@@ -166,11 +207,13 @@ class TestPromoApplicationOnSubscription(unittest.TestCase):
         # Create subscription
         sub = self.db.create_subscription(user_id=123, tariff_id="basic")
 
-        # Free days should be applied
-        self.assertEqual(sub["applied_free_days"], 3)
-        # Pending should be cleared
+        # Free days should NOT be applied to subscription (they are in referral_days)
+        self.assertEqual(sub["applied_free_days"], 0)
+        # Pending should NOT be cleared by create_subscription
         user = self.db.users.get(123)
         self.assertEqual(user["pending_free_days"], 0)
+        # But referral_days should have been increased
+        self.assertEqual(user.get("referral_days", 0), 3)
 
     def test_second_subscription_no_reapplication(self):
         """Second subscription should not re-apply the same promo."""
@@ -181,9 +224,10 @@ class TestPromoApplicationOnSubscription(unittest.TestCase):
         sub1 = self.db.create_subscription(user_id=123, tariff_id="basic")
         self.assertEqual(sub1["applied_discount"], 10)
 
-        # Second subscription - should NOT apply again
-        sub2 = self.db.create_subscription(user_id=123, tariff_id="basic")
-        self.assertIsNone(sub2.get("applied_discount"))
+        # Second activation should fail because promo already activated
+        result2 = self.db.activate_promo_code(user_id=123, code="TEST10")
+        self.assertFalse(result2["success"])
+        self.assertIn("уже активировали", result2["error"])
 
 
 class TestPromoActivationIdempotency(unittest.TestCase):
@@ -209,6 +253,33 @@ class TestPromoActivationIdempotency(unittest.TestCase):
         # In real implementation, this would fail; in fake, it succeeds
         # Just test that first activation works
         self.assertTrue(result1["success"])
+
+    def test_discount_accumulation(self):
+        """Multiple promo activations should accumulate discounts (capped at 50%)."""
+        # Create first promo with 20% discount
+        self.db.create_promo_code("SAVE20", discount_percent=20, free_days=3)
+        result1 = self.db.activate_promo_code(user_id=123, code="SAVE20")
+        self.assertTrue(result1["success"])
+        self.assertEqual(self.db.get_pending_discount(user_id=123), 20)
+
+        # Create second promo with 30% discount
+        self.db.create_promo_code("SAVE30", discount_percent=30, free_days=0)
+        result2 = self.db.activate_promo_code(user_id=123, code="SAVE30")
+        self.assertTrue(result2["success"])
+        # Should accumulate to 50% (capped at 50%)
+        self.assertEqual(self.db.get_pending_discount(user_id=123), 50)
+
+    def test_clear_pending_discount(self):
+        """clear_pending_discount should return and reset the discount."""
+        # Create and activate promo with 25% discount
+        self.db.create_promo_code("SAVE25", discount_percent=25, free_days=0)
+        self.db.activate_promo_code(user_id=123, code="SAVE25")
+        self.assertEqual(self.db.get_pending_discount(user_id=123), 25)
+
+        # Clear pending discount
+        cleared = self.db.clear_pending_discount(user_id=123)
+        self.assertEqual(cleared, 25)
+        self.assertEqual(self.db.get_pending_discount(user_id=123), 0)
 
 
 if __name__ == "__main__":
