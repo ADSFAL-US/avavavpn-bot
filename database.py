@@ -907,11 +907,8 @@ class Database:
                     "error": "Похоже этот промокод уже недействителен",
                 }
 
-        # Check max activations
-        if promo.get("current_activations", 0) >= promo.get("max_activations", 1):
-            return {"success": False, "error": "Промокод исчерпал лимит активаций"}
-
-        # Check idempotency
+        # Check if user has already activated this promo code (for all promos)
+        # This prevents SQL IntegrityError from the unique index on (promo_code_id, user_id)
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT id FROM promo_activations WHERE promo_code_id = ? AND user_id = ?",
@@ -919,8 +916,14 @@ class Database:
         )
         existing = cursor.fetchone()
 
-        if not promo.get("is_idempotent", 0) and existing:
+        if existing:
             return {"success": False, "error": "Вы уже активировали этот промокод"}
+
+        # Check max activations (only for non-idempotent promos, or count all activations)
+        # If idempotent with max_activations=1, the check above already caught it
+        if not promo.get("is_idempotent", 0):
+            if promo.get("current_activations", 0) >= promo.get("max_activations", 1):
+                return {"success": False, "error": "Промокод исчерпал лимит активаций"}
 
         # Check tariff restrictions
         applicable_tariffs = promo.get("applicable_tariffs")
@@ -936,38 +939,46 @@ class Database:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Create activation record
-        cursor.execute(
-            "INSERT INTO promo_activations (promo_code_id, user_id) VALUES (?, ?)",
-            (promo["id"], user_id),
-        )
-        activation_id = cursor.lastrowid
+        # Execute all promo activation operations within a transaction
+        try:
+            self.conn.execute("BEGIN")
 
-        # Increment activation counter
-        cursor.execute(
-            "UPDATE promo_codes SET current_activations = current_activations + 1 WHERE id = ?",
-            (promo["id"],),
-        )
+            # Create activation record
+            cursor.execute(
+                "INSERT INTO promo_activations (promo_code_id, user_id) VALUES (?, ?)",
+                (promo["id"], user_id),
+            )
+            activation_id = cursor.lastrowid
 
-        # Store pending promo on user for application on next subscription
-        cursor.execute(
-            "UPDATE users SET pending_discount_percent = ?, pending_free_days = ? WHERE user_id = ?",
-            (promo.get("discount_percent", 0), promo.get("free_days", 0), user_id),
-        )
+            # Increment activation counter
+            cursor.execute(
+                "UPDATE promo_codes SET current_activations = current_activations + 1 WHERE id = ?",
+                (promo["id"],),
+            )
 
-        self.conn.commit()
+            # Store pending promo on user for application on next subscription
+            cursor.execute(
+                "UPDATE users SET pending_discount_percent = ?, pending_free_days = ? WHERE user_id = ?",
+                (promo.get("discount_percent", 0), promo.get("free_days", 0), user_id),
+            )
 
-        logger.info(
-            f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}, "
-            f"pending_discount={promo.get('discount_percent', 0)}, pending_free_days={promo.get('free_days', 0)}"
-        )
+            self.conn.commit()
 
-        return {
-            "success": True,
-            "promo": promo,
-            "activation_id": activation_id,
-            "message": "Промокод успешно активирован",
-        }
+            logger.info(
+                f"Activated promo code: promo_id={promo['id']}, user_id={user_id}, activation_id={activation_id}, "
+                f"pending_discount={promo.get('discount_percent', 0)}, pending_free_days={promo.get('free_days', 0)}"
+            )
+
+            return {
+                "success": True,
+                "promo": promo,
+                "activation_id": activation_id,
+                "message": "Промокод успешно активирован",
+            }
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Promo activation failed: {e}")
+            return {"success": False, "error": "Ошибка активации промокода"}
 
     def get_promo_activations(self, promo_code_id):
         """Get all activations for a promo code."""
