@@ -222,6 +222,11 @@ class SubscriptionService:
 
                 self.xc.update_subscription(
                     subscription_id=panel_id,
+                    expiry_days=1,
+                )    
+
+                self.xc.update_subscription(
+                    subscription_id=panel_id,
                     expiry_days=total_expiry_days,
                 )
             except xcontroller_client.XControllerAPIError as exc:
@@ -379,6 +384,11 @@ class SubscriptionService:
 
         try:
             if panel_id:
+                self.xc.update_subscription(
+                    subscription_id=panel_id,
+                    expiry_days=1,
+                )
+
                 self.xc.update_subscription(
                     subscription_id=panel_id,
                     expiry_days=effective_days,
