@@ -371,6 +371,17 @@ def _average_net_profit(stats: dict, total_active: int) -> float:
     )
     return total_net / total_active
 
+def _get_total_money_got(stats: dict) -> float:
+    """Calculate total money received from all subscriptions."""
+    tax_multiplier = 1 - (config.TAX_PERCENT / 100.0)
+    total_money = sum(
+        stat.get("total_count", 0)
+        * TARIFFS.get(tid, {}).get("price", 0)
+        * tax_multiplier
+        for tid, stat in stats.items()
+    )
+    return total_money
+
 
 def build_admin_stats() -> tuple[str, InlineKeyboardMarkup]:
     """Build admin statistics view."""
@@ -380,6 +391,7 @@ def build_admin_stats() -> tuple[str, InlineKeyboardMarkup]:
     total_active = db.get_active_subscription_count()
     total_expired = db.get_expired_subscription_count()
     avg_profit = _average_net_profit(stats, total_active)
+    money_got = _get_total_money_got(stats)
 
     text = (
         "📊 <b>Статистика</b>\n"
@@ -389,6 +401,7 @@ def build_admin_stats() -> tuple[str, InlineKeyboardMarkup]:
         f"🟢 Активных подписок: <b>{total_active}</b>\n"
         f"🔴 Просроченных подписок: <b>{total_expired}</b>\n"
         f"💰 Средняя прибыль с подписки: <b>{avg_profit:.2f} ₽</b>\n"
+        f"💰 Всего получено: <b>{money_got:.2f} ₽</b>\n"
         f"<i>(налог/комиссия {config.TAX_PERCENT:g}%)</i>\n\n"
         "<b>По тарифам (всего / активных / просрочено):</b>\n"
     )
