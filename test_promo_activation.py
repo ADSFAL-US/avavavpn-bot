@@ -7,12 +7,8 @@ Tests the complete flow implemented in database.py:
 3. Pending values are cleared after application
 4. Multiple subscriptions don't re-apply the same promo
 """
-import os
-import sys
-import tempfile
-import sqlite3
 import unittest
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 
 def make_fake_db():
@@ -24,7 +20,7 @@ def make_fake_db():
                 cursor=lambda: SimpleNamespace(
                     execute=lambda *a, **k: None,
                     fetchone=lambda: None,
-                    fetchall=lambda: [],
+                    fetchall=list,
                 )
             )
             self.promo_codes = {}
@@ -147,7 +143,7 @@ class TestPromoActivationStorage(unittest.TestCase):
     def test_activate_promo_stores_discount(self):
         """Activate promo should store discount_percent on user."""
         # Create promo with 20% discount
-        promo_id = self.db.create_promo_code("SAVE20", discount_percent=20, free_days=3)
+        self.db.create_promo_code("SAVE20", discount_percent=20, free_days=3)
 
         # Activate for user 123
         result = self.db.activate_promo_code(user_id=123, code="SAVE20")
@@ -164,7 +160,7 @@ class TestPromoActivationStorage(unittest.TestCase):
     def test_activate_promo_stores_free_days(self):
         """Activate promo should store free_days on user."""
         # Create promo with 7 free days
-        promo_id = self.db.create_promo_code("FREEDAY", discount_percent=0, free_days=7)
+        self.db.create_promo_code("FREEDAY", discount_percent=0, free_days=7)
 
         result = self.db.activate_promo_code(user_id=456, code="FREEDAY")
 
@@ -239,7 +235,7 @@ class TestPromoActivationIdempotency(unittest.TestCase):
     def test_idempotent_promo_cannot_activate_twice(self):
         """Idempotent promo should fail on second activation."""
         # Create idempotent promo
-        promo_id = self.db.create_promo_code("IDEMPOTENT", discount_percent=10,
+        self.db.create_promo_code("IDEMPOTENT", discount_percent=10,
                                               free_days=5, is_idempotent=1)
 
         # First activation should succeed
@@ -249,7 +245,7 @@ class TestPromoActivationIdempotency(unittest.TestCase):
         # Second activation should fail (idempotent)
         # Note: Our minimal fake doesn't enforce idempotency check,
         # but the real implementation does
-        result2 = self.db.activate_promo_code(user_id=123, code="IDEMPOTENT")
+        self.db.activate_promo_code(user_id=123, code="IDEMPOTENT")
         # In real implementation, this would fail; in fake, it succeeds
         # Just test that first activation works
         self.assertTrue(result1["success"])

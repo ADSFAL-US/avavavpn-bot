@@ -966,9 +966,11 @@ class Database:
 
         # Check max activations (only for non-idempotent promos, or count all activations)
         # If idempotent with max_activations=1, the check above already caught it
-        if not promo.get("is_idempotent", 0):
-            if promo.get("current_activations", 0) >= promo.get("max_activations", 1):
-                return {"success": False, "error": "Промокод исчерпал лимит активаций"}
+        if (
+            not promo.get("is_idempotent", 0)
+            and promo.get("current_activations", 0) >= promo.get("max_activations", 1)
+        ):
+            return {"success": False, "error": "Промокод исчерпал лимит активаций"}
 
         # Check tariff restrictions
         applicable_tariffs = promo.get("applicable_tariffs")
@@ -1032,7 +1034,7 @@ class Database:
                 "activation_id": activation_id,
                 "message": "Промокод успешно активирован",
             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self.conn.rollback()
             logger.error(f"Promo activation failed: {e}")
             return {"success": False, "error": "Ошибка активации промокода"}
