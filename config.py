@@ -30,6 +30,11 @@ YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "")
 YOOKASSA_API_KEY = os.getenv("YOOKASSA_API_KEY", "")
 YOOKASSA_TEST_MODE = os.getenv("YOOKASSA_TEST_MODE", "true").lower() == "true"
 
+# Tax / acquiring commission deducted from each payment (percent).
+# Used to estimate net profit in the admin statistics view.
+# Default ~3.5% approximates the YooKassa acquiring fee; override via env.
+TAX_PERCENT = float(os.getenv("TAX_PERCENT", "3.5"))
+
 # Channel subscription softlock
 REQUIRED_CHANNEL_USERNAME = os.getenv("REQUIRED_CHANNEL_USERNAME", "@AvavaVpn")
 

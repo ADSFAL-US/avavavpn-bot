@@ -88,6 +88,60 @@ class KeyboardTests(unittest.TestCase):
         text, _keyboard = build_admin_subscriptions()
         self.assertIn("📦 5 │ 🟢 3 │ 🔴 2", text)
 
+    def test_build_admin_stats_average_profit(self):
+        self.db_mock.get_subscription_stats.return_value = {
+            "trial": {
+                "name": "Trial",
+                "total_count": 5,
+                "active_count": 5,
+                "expired_count": 0,
+            },
+            "basic": {
+                "name": "Basic",
+                "total_count": 2,
+                "active_count": 2,
+                "expired_count": 0,
+            },
+            "premium": {
+                "name": "Premium",
+                "total_count": 1,
+                "active_count": 1,
+                "expired_count": 0,
+            },
+        }
+        self.db_mock.get_active_subscription_count.return_value = 8
+
+        with patch("keyboards.config.TAX_PERCENT", 0):
+            text, _keyboard = build_admin_stats()
+
+        # (2 * 99 + 1 * 199 + 5 * 0) / 8 = 49.625 -> 49.62
+        self.assertIn("Средняя прибыль с подписки: <b>49.62 ₽</b>", text)
+
+    def test_build_admin_stats_average_profit_with_tax(self):
+        self.db_mock.get_subscription_stats.return_value = {
+            "basic": {
+                "name": "Basic",
+                "total_count": 1,
+                "active_count": 1,
+                "expired_count": 0,
+            },
+        }
+        self.db_mock.get_active_subscription_count.return_value = 1
+
+        with patch("keyboards.config.TAX_PERCENT", 10):
+            text, _keyboard = build_admin_stats()
+
+        # 99 * 0.9 = 89.1
+        self.assertIn("Средняя прибыль с подписки: <b>89.10 ₽</b>", text)
+
+    def test_build_admin_stats_average_profit_no_active(self):
+        self.db_mock.get_subscription_stats.return_value = {}
+        self.db_mock.get_active_subscription_count.return_value = 0
+
+        text, _keyboard = build_admin_stats()
+
+        self.assertIn("Средняя прибыль с подписки: <b>0.00 ₽</b>", text)
+
 
 if __name__ == "__main__":
     unittest.main()
