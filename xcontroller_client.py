@@ -562,8 +562,13 @@ class SubscriptionManager:
             try:
                 self.xc.update_subscription(
                     subscription_id=panel_id,
+                    expiry_days=1,
+                )
+                self.xc.update_subscription(
+                    subscription_id=panel_id,
                     expiry_days=total_expiry_days,
                 )
+                # в начале сбрасываем срок подписки, что бы при изменении 30 на 30 не получилось не продленной подписки
                 logger.info(
                     f"Extended panel subscription {panel_id} by {extra_days} days "
                     f"(total_expiry_days={total_expiry_days})"
