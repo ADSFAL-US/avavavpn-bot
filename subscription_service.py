@@ -208,8 +208,9 @@ class SubscriptionService:
                 if updated_sub and updated_sub.get("ends_at"):
                     ends_at_str = updated_sub.get("ends_at")
                     try:
-                        clean = ends_at_str.split("+")[0]
-                        new_end = datetime.fromisoformat(clean)
+                        new_end = datetime.fromisoformat(ends_at_str)
+                        if new_end.tzinfo is None:
+                            new_end = new_end.replace(tzinfo=timezone.utc)
                         # Calculate total days from now to NEW expiry (old expiry + extra_days)
                         remaining_days = max(
                             1, (new_end - datetime.now(timezone.utc)).days

@@ -3,10 +3,12 @@ import logging
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import requests
 
 from config import DATABASE_PATH
+from xcontroller_client import XControllerClient
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +62,13 @@ TARIFFS = {
 
 
 class Database:
-    def __init__(self, db_path=None):
+    def __init__(self, db_path=None) -> None:
         self.db_path = db_path or DATABASE_PATH
         self.conn = None
         self._connect()
         self._create_tables()
 
-    def _connect(self):
+    def _connect(self) -> None:
         """Connect to the database."""
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
@@ -74,7 +76,7 @@ class Database:
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA busy_timeout = 30000")
 
-    def _create_tables(self):
+    def _create_tables(self) -> None:
         """Create all required tables."""
         cursor = self.conn.cursor()
 
@@ -311,7 +313,7 @@ class Database:
 
         self.conn.commit()
 
-    def get_or_create_user(self, user_data):
+    def get_or_create_user(self, user_data: dict) -> dict:
         """Get existing user or create a new one."""
         user_id = user_data.get("user_id")
 
@@ -354,32 +356,32 @@ class Database:
             "has_rewarded_referrer": False,
         }
 
-    def is_admin(self, user_id):
+    def is_admin(self, user_id: int) -> int:
         """Check if a user is an admin."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT is_admin FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         return row and row["is_admin"] == 1
 
-    def set_admin(self, user_id):
+    def set_admin(self, user_id: int) -> None:
         """Promote a user to admin."""
         cursor = self.conn.cursor()
         cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (user_id,))
         self.conn.commit()
 
-    def remove_admin(self, user_id):
+    def remove_admin(self, user_id: int) -> None:
         """Remove admin status from a user."""
         cursor = self.conn.cursor()
         cursor.execute("UPDATE users SET is_admin = 0 WHERE user_id = ?", (user_id,))
         self.conn.commit()
 
-    def get_admin_ids(self):
+    def get_admin_ids(self) -> list:
         """Get all admin user IDs."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT user_id FROM users WHERE is_admin = 1")
         return [row["user_id"] for row in cursor.fetchall()]
 
-    def get_active_subscription(self, user_id):
+    def get_active_subscription(self, user_id: int) -> dict | None:
         """Get the active subscription for a user."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -391,14 +393,14 @@ class Database:
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def get_subscription_by_id(self, subscription_id):
+    def get_subscription_by_id(self, subscription_id: int) -> dict | None:
         """Get subscription by ID."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def get_user_subscriptions(self, user_id):
+    def get_user_subscriptions(self, user_id: int) -> list:
         """Get all subscriptions for a user."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -408,8 +410,8 @@ class Database:
 
     def create_subscription(
         self,
-        user_id,
-        tariff_id,
+        user_id: int,
+        tariff_id: str,
         ends_at=None,
         speed_mbps=None,
         traffic_limit_mb=None,
@@ -418,7 +420,7 @@ class Database:
         panel_subscription_id=None,
         panel_sub_token=None,
         payment_id=None,
-    ):
+    ) -> dict:
         """Create a new subscription for a user with full panel integration."""
         tariff = TARIFFS.get(tariff_id)
         if not tariff:
@@ -491,7 +493,7 @@ class Database:
             "applied_free_days": 0,
         }
 
-    def cancel_subscription(self, subscription_id, user_id):
+    def cancel_subscription(self, subscription_id: int, user_id: int) -> bool:
         """Cancel a subscription."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -501,7 +503,7 @@ class Database:
         self.conn.commit()
         return cursor.rowcount > 0
 
-    def cancel_subscription_by_tariff(self, tariff_id, user_id=None):
+    def cancel_subscription_by_tariff(self, tariff_id: str, user_id: int | None = None) -> int:
         """Cancel subscription by tariff ID, optionally filtered by user_id."""
         cursor = self.conn.cursor()
         if user_id is not None:
@@ -517,7 +519,7 @@ class Database:
         self.conn.commit()
         return cursor.rowcount
 
-    def update_speed(self, subscription_id, speed_mbps):
+    def update_speed(self, subscription_id: int, speed_mbps: int) -> None:
         """Update the speed for a subscription."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -526,7 +528,7 @@ class Database:
         )
         self.conn.commit()
 
-    def update_traffic_used(self, user_id, bytes_transferred):
+    def update_traffic_used(self, user_id: int, bytes_transferred: int) -> None:
         """Update traffic usage for a user."""
         mb_transferred = bytes_transferred / (1024 * 1024)  # bytes to MB
 
@@ -548,14 +550,14 @@ class Database:
             )
             self.conn.commit()
 
-    def get_user_count(self):
+    def get_user_count(self) -> int:
         """Get total number of users."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT COUNT(*) as count FROM users")
         return cursor.fetchone()["count"]
 
-    def get_active_subscription_count(self):
-        """Get count of active (non-expired) subscriptions."""
+    def get_active_subscription_count(self) -> int:
+        """Get count of active subscriptions."""
         cursor = self.conn.cursor()
         now = datetime.now(timezone.utc).isoformat()
         cursor.execute(
@@ -582,7 +584,7 @@ class Database:
         )
         return cursor.fetchone()["count"]
 
-    def get_all_users(self, offset=0, limit=100):
+    def get_all_users(self, offset: int = 0, limit: int = 100) -> list:
         """Get all users with pagination."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -591,14 +593,14 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def get_user_by_id(self, user_id):
+    def get_user_by_id(self, user_id: int) -> dict | None:
         """Get a specific user by ID."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def ban_user(self, user_id, reason=None, duration_days=None):
+    def ban_user(self, user_id: int, reason: str | None = None, duration_days: int | None = None) -> None:
         """Ban a user."""
         cursor = self.conn.cursor()
 
@@ -615,7 +617,7 @@ class Database:
             )
         self.conn.commit()
 
-    def unban_user(self, user_id):
+    def unban_user(self, user_id: int) -> None:
         """Unban a user."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -624,7 +626,7 @@ class Database:
         )
         self.conn.commit()
 
-    def log_admin_action(self, admin_id, action, target_user_id=None, details=None):
+    def log_admin_action(self, admin_id: int, action: str, target_user_id: int | None = None, details: str | None = None) -> None:
         """Log an admin action."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -633,7 +635,7 @@ class Database:
         )
         self.conn.commit()
 
-    def get_admin_logs(self, limit=50):
+    def get_admin_logs(self, limit: int = 50) -> list:
         """Get recent admin logs."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -655,7 +657,7 @@ class Database:
         row = cursor.fetchone()
         return row["count"] > 0 if row else False
 
-    def add_referral_days(self, user_id, days):
+    def add_referral_days(self, user_id: int, days: int) -> bool:
         """Add referral days to user's balance."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -665,7 +667,7 @@ class Database:
         self.conn.commit()
         return True
 
-    def reward_referrer(self, user_id, tariff_id):
+    def reward_referrer(self, user_id: int, tariff_id: str) -> bool:
         """Reward the referrer of a user if they haven't been rewarded yet.
 
         Returns True if referrer was rewarded, False otherwise.
@@ -695,7 +697,7 @@ class Database:
 
         return True
 
-    def get_pending_discount(self, user_id):
+    def get_pending_discount(self, user_id: int) -> float:
         """Return the current pending_discount_percent for a user without modifying it."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -704,7 +706,7 @@ class Database:
         row = cursor.fetchone()
         return (row["pending_discount_percent"] or 0) if row else 0
 
-    def clear_pending_discount(self, user_id):
+    def clear_pending_discount(self, user_id: int) -> float:
         """Return the current pending_discount_percent and reset it to 0.
 
         Used after successful payment to consume the accumulated promo discount.
@@ -723,7 +725,7 @@ class Database:
         self.conn.commit()
         return discount
 
-    def apply_referral_days_to_subscription(self, subscription_id, user_id):
+    def apply_referral_days_to_subscription(self, subscription_id: int, user_id: int) -> int:
         """Consume accumulated referral_days and extend the subscription by that amount.
 
         Returns the number of days applied, or 0 if the user has no referral days
@@ -748,7 +750,7 @@ class Database:
         self.extend_subscription(subscription_id, referral_days)
         return referral_days
 
-    def extend_subscription(self, subscription_id, extra_days):
+    def extend_subscription(self, subscription_id: int, extra_days: int) -> bool:
         """Extend an existing subscription's ends_at by extra_days."""
         from datetime import datetime, timedelta
 
@@ -783,7 +785,7 @@ class Database:
         )
         return True
 
-    def set_discount_used(self, user_id):
+    def set_discount_used(self, user_id: int) -> bool:
         """Mark user's discount as used."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -792,15 +794,8 @@ class Database:
         self.conn.commit()
         return True
 
-    def get_subscription_stats(self):
-        """Get subscription statistics per tariff, split by status.
-
-        Each tariff entry contains:
-        - name: tariff display name
-        - total_count: all subscriptions for the tariff (any status)
-        - active_count: active and not yet expired
-        - expired_count: active status but ends_at in the past
-        """
+    def get_subscription_stats(self) -> dict:
+        """Get subscription statistics."""
         cursor = self.conn.cursor()
         now = datetime.now(timezone.utc).isoformat()
 
@@ -837,7 +832,7 @@ class Database:
 
         return stats
 
-    def _parse_speed(self, speed_str):
+    def _parse_speed(self, speed_str: str) -> float:
         """Parse speed string to get numeric value."""
         import re
 
@@ -856,17 +851,17 @@ class Database:
 
     def create_promo_code(
         self,
-        code,
-        discount_percent=0,
-        free_days=0,
-        valid_from=None,
-        valid_until=None,
-        max_activations=1,
-        applicable_tariffs=None,
-        activation_text=None,
-        is_idempotent=0,
-        is_active=1,
-    ):
+        code: str,
+        discount_percent: float = 0,
+        free_days: int = 0,
+        valid_from: datetime | None = None,
+        valid_until: datetime | None = None,
+        max_activations: int = 1,
+        applicable_tariffs: list | None = None,
+        activation_text: str | None = None,
+        is_idempotent: int = 0,
+        is_active: int = 1,
+    ) -> int:
         """Create a new promo code."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -893,7 +888,7 @@ class Database:
         logger.info(f"Created promo code: id={promo_id}, code={code.upper()}")
         return promo_id
 
-    def get_promo_code_by_code(self, code):
+    def get_promo_code_by_code(self, code: str) -> dict | None:
         """Get promo code by code string (case-insensitive)."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -903,14 +898,14 @@ class Database:
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def get_promo_code_by_id(self, promo_id):
+    def get_promo_code_by_id(self, promo_id: int) -> dict | None:
         """Get promo code by ID."""
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM promo_codes WHERE id = ?", (promo_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def list_promo_codes(self, active_only=True):
+    def list_promo_codes(self, active_only: bool = True) -> list[dict]:
         """List all promo codes."""
         cursor = self.conn.cursor()
         if active_only:
@@ -921,7 +916,7 @@ class Database:
             cursor.execute("SELECT * FROM promo_codes ORDER BY created_at DESC")
         return [dict(row) for row in cursor.fetchall()]
 
-    def update_promo_code(self, promo_id, **fields):
+    def update_promo_code(self, promo_id: int, **fields) -> bool:
         """Update promo code fields."""
         if not fields:
             return False
@@ -950,7 +945,7 @@ class Database:
             return True
         return False
 
-    def delete_promo_code(self, promo_id):
+    def delete_promo_code(self, promo_id: int) -> bool:
         """Soft delete promo code (set is_active=0)."""
         cursor = self.conn.cursor()
         cursor.execute("UPDATE promo_codes SET is_active = 0 WHERE id = ?", (promo_id,))
@@ -961,7 +956,7 @@ class Database:
             return True
         return False
 
-    def activate_promo_code(self, user_id, code):
+    def activate_promo_code(self, user_id: int, code: str) -> dict:
         """Activate a promo code for a user.
 
         Returns dict with:
@@ -1014,9 +1009,7 @@ class Database:
 
         # Check max activations (only for non-idempotent promos, or count all activations)
         # If idempotent with max_activations=1, the check above already caught it
-        if not promo.get("is_idempotent", 0) and promo.get(
-            "current_activations", 0
-        ) >= promo.get("max_activations", 1):
+        if not promo.get("is_idempotent", 0) and promo.get("current_activations", 0) >= promo.get("max_activations", 1):
             return {"success": False, "error": "Промокод исчерпал лимит активаций"}
 
         # Check tariff restrictions
@@ -1081,12 +1074,12 @@ class Database:
                 "activation_id": activation_id,
                 "message": "Промокод успешно активирован",
             }
-        except Exception as e:  # noqa: BLE001
+        except sqlite3.Error as e:
             self.conn.rollback()
             logger.error(f"Promo activation failed: {e}")
             return {"success": False, "error": "Ошибка активации промокода"}
 
-    def get_promo_activations(self, promo_code_id):
+    def get_promo_activations(self, promo_code_id: int) -> list[dict]:
         """Get all activations for a promo code."""
         cursor = self.conn.cursor()
         cursor.execute(
@@ -1099,7 +1092,7 @@ class Database:
         )
         return [dict(row) for row in cursor.fetchall()]
 
-    def cleanup_expired_promos(self, days_grace=1):
+    def cleanup_expired_promos(self, days_grace: int = 1) -> dict:
         """Delete promos expired more than days_grace days ago."""
         from datetime import datetime, timedelta
 
@@ -1118,7 +1111,7 @@ class Database:
 
         return {"deleted_count": deleted_count}
 
-    def populate_missing_panel_subscription_ids(self, xcontroller_client):
+    def populate_missing_panel_subscription_ids(self, xcontroller_client: "XControllerClient") -> dict:
         """
         Populate missing panel_subscription_id for existing subscriptions.
 
@@ -1233,8 +1226,7 @@ def get_database() -> "Database":
 # For backward compatibility - create a module-level db object that can be patched
 class _DatabaseProxy:
     """Proxy to the global database instance that allows patching."""
-
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         # Only try to get the database if it's already initialized
         if _db_instance is not None:
             return getattr(_db_instance, name)

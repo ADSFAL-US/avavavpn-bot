@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 
 os.environ.setdefault("DATABASE_PATH", tempfile.gettempdir() + "/avava_vpn_test.db")
 
@@ -90,6 +91,12 @@ class DummyXC:
         return {"success": True}
 
 
+class SuccessfulUpdateXC(DummyXC):
+    def update_subscription(self, subscription_id, **kwargs):
+        self.updated.append({"subscription_id": subscription_id, **kwargs})
+        return {"success": True}
+
+
 class SubscriptionServiceTests(unittest.TestCase):
     def test_create_subscription_returns_success(self):
         db = DummyDB()
@@ -126,6 +133,23 @@ class SubscriptionServiceTests(unittest.TestCase):
         self.assertFalse(result["success"])
         self.assertTrue(result.get("manual_action_required"))
         self.assertNotIn("local_db_updated", result)
+
+    def test_extend_subscription_preserves_remaining_time_for_aware_expiry(self):
+        db = DummyDB()
+        xc = SuccessfulUpdateXC()
+        service = SubscriptionService(db, xc)
+        db.subscriptions[1] = {
+            "id": 1,
+            "user_id": 1,
+            "panel_subscription_id": 10,
+            "panel_sub_token": "tok",
+            "ends_at": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(),
+        }
+
+        result = service.extend_subscription(1, 7)
+
+        self.assertTrue(result["success"])
+        self.assertGreater(xc.updated[0]["expiry_days"], 7)
 
     def test_create_subscription_blocks_when_panel_unavailable(self):
         db = DummyDB()
