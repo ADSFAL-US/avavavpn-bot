@@ -375,7 +375,7 @@ def _get_total_money_got(stats: dict) -> float:
     """Calculate total money received from all subscriptions."""
     tax_multiplier = 1 - (config.TAX_PERCENT / 100.0)
     total_money = sum(
-        stat.get("total_count", 0)
+        stat.get("active_count", 0)
         * TARIFFS.get(tid, {}).get("price", 0)
         * tax_multiplier
         for tid, stat in stats.items()
