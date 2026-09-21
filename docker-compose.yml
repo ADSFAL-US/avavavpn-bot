@@ -23,9 +23,6 @@ services:
       timeout: 3s
       retries: 3
 
-volumes:
-  redis-data:
-
   bot:
     build: .
     container_name: avavavpn-bot
@@ -62,3 +59,6 @@ volumes:
 networks:
   bot-network:
     driver: bridge
+
+volumes:
+  redis-data:
