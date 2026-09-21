@@ -343,7 +343,9 @@ def build_admin_panel(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         [btn("📊 Статистика", "admin_stats"), btn("👥 Пользователи", "admin_users")],
         [btn("📋 Подписки", "admin_subscriptions"), btn("🔍 Найти", "admin_find")],
         [btn("🎁 Выдать подписку", "admin_give_subscription")],
-        [btn("📝 Логи", "admin_logs")],        [btn("🎁 Промокоды", "admin_promos")],        [btn("🧪 Симуляция реферала", "admin_simulate_referral")],
+        [btn("📝 Логи", "admin_logs")],
+        [btn("🎁 Промокоды", "admin_promos")],
+        [btn("🧪 Симуляция реферала", "admin_simulate_referral")],
         [btn("� Мониторинг панелей", "monitor_menu")],
         [btn("�🔙 В меню", "main_menu")],
     ]
@@ -355,21 +357,31 @@ def build_admin_stats() -> tuple[str, InlineKeyboardMarkup]:
     """Build admin statistics view."""
     stats = db.get_subscription_stats()
     total_users = db.get_user_count()
+    total_subs = db.get_total_subscription_count()
     total_active = db.get_active_subscription_count()
+    total_expired = db.get_expired_subscription_count()
 
     text = (
         "📊 <b>Статистика</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 Всего пользователей: <b>{total_users}</b>\n"
-        f"🟢 Активных подписок: <b>{total_active}</b>\n\n"
-        "<b>По тарифам:</b>\n"
+        f"📦 Всего подписок: <b>{total_subs}</b>\n"
+        f"🟢 Активных подписок: <b>{total_active}</b>\n"
+        f"🔴 Просроченных подписок: <b>{total_expired}</b>\n\n"
+        "<b>По тарифам (всего / активных / просрочено):</b>\n"
     )
 
     icons = {"trial": "🧪", "basic": "🛡️", "premium": "💎"}
 
     for tid, stat in stats.items():
         icon = icons.get(tid, "📦")
-        text += f"{icon} {stat['name']}: <b>{stat.get('active_count', 0)}</b>\n"
+        total = stat.get("total_count", 0)
+        active = stat.get("active_count", 0)
+        expired = stat.get("expired_count", 0)
+        text += (
+            f"{icon} {stat['name']}: <b>{total}</b> / "
+            f"<b>{active}</b> / <b>{expired}</b>\n"
+        )
 
     keyboard = [[back_btn("admin_panel")]]
     return text, InlineKeyboardMarkup(keyboard)
@@ -402,11 +414,18 @@ def build_admin_subscriptions() -> tuple[str, InlineKeyboardMarkup]:
     """Build subscriptions management view."""
     stats = db.get_subscription_stats()
 
-    text = "📋 <b>Подписки по тарифам:</b>\n\n"
+    text = (
+        "📋 <b>Подписки по тарифам:</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n"
+        "📦 всего │ 🟢 активных │ 🔴 просрочено\n\n"
+    )
 
     for tid, tariff in TARIFFS.items():
-        count = stats.get(tid, {}).get("active_count", 0)
-        text += f"{tariff['name']}: <b>{count}</b> активных\n"
+        stat = stats.get(tid, {})
+        total = stat.get("total_count", 0)
+        active = stat.get("active_count", 0)
+        expired = stat.get("expired_count", 0)
+        text += f"<b>{tariff['name']}</b>\n   📦 {total} │ 🟢 {active} │ 🔴 {expired}\n"
 
     keyboard = [[back_btn("admin_panel")]]
     return text, InlineKeyboardMarkup(keyboard)

@@ -223,7 +223,7 @@ class SubscriptionService:
                 self.xc.update_subscription(
                     subscription_id=panel_id,
                     expiry_days=1,
-                )    
+                )
 
                 self.xc.update_subscription(
                     subscription_id=panel_id,

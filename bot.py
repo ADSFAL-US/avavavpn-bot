@@ -289,7 +289,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             # Admin is creating a promo code - delegate to admin handler.
             # NOTE: do NOT clear admin_promo_create here — the handler checks it
             # and it must remain True for subsequent creation steps.
-            await handle_admin_promo_create_code(update, context, update.effective_user.id)
+            await handle_admin_promo_create_code(
+                update, context, update.effective_user.id
+            )
             return
 
         # User is activating a promo code
@@ -297,7 +299,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     elif state == STATE_PROMO_DISCOUNT:
-        await handle_admin_promo_create_discount(update, context, update.effective_user.id)
+        await handle_admin_promo_create_discount(
+            update, context, update.effective_user.id
+        )
         return
 
     elif state == STATE_PROMO_DAYS:
@@ -305,19 +309,27 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     elif state == STATE_PROMO_VALID_FROM:
-        await handle_admin_promo_create_valid_from(update, context, update.effective_user.id)
+        await handle_admin_promo_create_valid_from(
+            update, context, update.effective_user.id
+        )
         return
 
     elif state == STATE_PROMO_VALID_UNTIL:
-        await handle_admin_promo_create_valid_until(update, context, update.effective_user.id)
+        await handle_admin_promo_create_valid_until(
+            update, context, update.effective_user.id
+        )
         return
 
     elif state == STATE_PROMO_MAX_ACTIVATIONS:
-        await handle_admin_promo_create_max_activations(update, context, update.effective_user.id)
+        await handle_admin_promo_create_max_activations(
+            update, context, update.effective_user.id
+        )
         return
 
     elif state == STATE_PROMO_TARIFFS:
-        await handle_admin_promo_create_tariffs(update, context, update.effective_user.id)
+        await handle_admin_promo_create_tariffs(
+            update, context, update.effective_user.id
+        )
         return
 
     elif state == STATE_PROMO_TEXT:
@@ -325,12 +337,16 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     elif state == STATE_PROMO_IDEMPOTENT:
-        await handle_admin_promo_create_idempotent(update, context, update.effective_user.id)
+        await handle_admin_promo_create_idempotent(
+            update, context, update.effective_user.id
+        )
         return
 
     elif state.startswith("admin_promo_edit_"):
         # Admin is editing a promo code field
-        await handle_admin_promo_edit_field_value(update, context, update.effective_user.id)
+        await handle_admin_promo_edit_field_value(
+            update, context, update.effective_user.id
+        )
         return
 
     elif state == STATE_BAN_REASON:

@@ -6,6 +6,8 @@ from unittest.mock import patch
 os.environ.setdefault("DATABASE_PATH", tempfile.gettempdir() + "/avava_vpn_test.db")
 
 from keyboards import (
+    build_admin_stats,
+    build_admin_subscriptions,
     build_main_menu,
     build_referral_menu,
     build_tariff_detail,
@@ -27,6 +29,8 @@ class KeyboardTests(unittest.TestCase):
         self.db_mock.get_subscription_stats.return_value = {}
         self.db_mock.get_user_count.return_value = 1
         self.db_mock.get_active_subscription_count.return_value = 1
+        self.db_mock.get_total_subscription_count.return_value = 3
+        self.db_mock.get_expired_subscription_count.return_value = 1
         self.db_mock.get_all_users.return_value = []
         self.db_mock.get_admin_logs.return_value = []
         self.addCleanup(self.patcher.stop)
@@ -56,6 +60,33 @@ class KeyboardTests(unittest.TestCase):
     def test_build_tariff_detail_for_unknown_tariff(self):
         text, _keyboard = build_tariff_detail("unknown", 1)
         self.assertEqual(text, "❌ Тариф не найден")
+
+    def test_build_admin_stats_shows_status_breakdown(self):
+        self.db_mock.get_subscription_stats.return_value = {
+            "basic": {
+                "name": "Basic",
+                "total_count": 5,
+                "active_count": 3,
+                "expired_count": 2,
+            }
+        }
+        text, _keyboard = build_admin_stats()
+        self.assertIn("Всего подписок: <b>3</b>", text)
+        self.assertIn("Активных подписок: <b>1</b>", text)
+        self.assertIn("Просроченных подписок: <b>1</b>", text)
+        self.assertIn("Basic: <b>5</b> / <b>3</b> / <b>2</b>", text)
+
+    def test_build_admin_subscriptions_shows_status_breakdown(self):
+        self.db_mock.get_subscription_stats.return_value = {
+            "basic": {
+                "name": "Basic",
+                "total_count": 5,
+                "active_count": 3,
+                "expired_count": 2,
+            }
+        }
+        text, _keyboard = build_admin_subscriptions()
+        self.assertIn("📦 5 │ 🟢 3 │ 🔴 2", text)
 
 
 if __name__ == "__main__":

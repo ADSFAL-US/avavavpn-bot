@@ -7,12 +7,14 @@ Tests the complete flow implemented in database.py:
 3. Pending values are cleared after application
 4. Multiple subscriptions don't re-apply the same promo
 """
+
 import unittest
 from types import SimpleNamespace
 
 
 def make_fake_db():
     """Create a fresh fake database instance for handler tests."""
+
     class FakeDB:
         def __init__(self):
             # Simulate a minimal SQLite connection with cursor
@@ -33,8 +35,9 @@ def make_fake_db():
         def get_user_by_id(self, user_id):
             return self.users.get(user_id)
 
-        def create_promo_code(self, code, discount_percent=0, free_days=0,
-                              is_idempotent=0, is_active=1):
+        def create_promo_code(
+            self, code, discount_percent=0, free_days=0, is_idempotent=0, is_active=1
+        ):
             promo_id = self.next_promo_id
             self.next_promo_id += 1
             promo = {
@@ -84,13 +87,16 @@ def make_fake_db():
             discount_percent = promo.get("discount_percent", 0) or 0
             if discount_percent > 0:
                 self.users[user_id]["pending_discount_percent"] = min(
-                    self.users[user_id]["pending_discount_percent"] + discount_percent, 50
+                    self.users[user_id]["pending_discount_percent"] + discount_percent,
+                    50,
                 )
 
             # Apply free_days: add to referral_days balance (not pending_free_days)
             free_days = promo.get("free_days", 0) or 0
             if free_days > 0:
-                self.users[user_id]["referral_days"] = self.users[user_id].get("referral_days", 0) + free_days
+                self.users[user_id]["referral_days"] = (
+                    self.users[user_id].get("referral_days", 0) + free_days
+                )
 
             return {
                 "success": True,
@@ -235,8 +241,9 @@ class TestPromoActivationIdempotency(unittest.TestCase):
     def test_idempotent_promo_cannot_activate_twice(self):
         """Idempotent promo should fail on second activation."""
         # Create idempotent promo
-        self.db.create_promo_code("IDEMPOTENT", discount_percent=10,
-                                              free_days=5, is_idempotent=1)
+        self.db.create_promo_code(
+            "IDEMPOTENT", discount_percent=10, free_days=5, is_idempotent=1
+        )
 
         # First activation should succeed
         result1 = self.db.activate_promo_code(user_id=123, code="IDEMPOTENT")

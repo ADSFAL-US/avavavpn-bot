@@ -40,6 +40,21 @@ class FakeDB:
     def remove_admin(self, user_id):
         return True
 
+    def get_user_count(self):
+        return 0
+
+    def get_subscription_stats(self):
+        return {}
+
+    def get_total_subscription_count(self):
+        return 0
+
+    def get_active_subscription_count(self):
+        return 0
+
+    def get_expired_subscription_count(self):
+        return 0
+
 
 fake_db_module = ModuleType("database")
 fake_db_module.db = FakeDB()

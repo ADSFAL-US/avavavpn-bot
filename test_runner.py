@@ -33,10 +33,10 @@ class TestRunner:
         self, cmd: list[str], phase_name: str, capture_output: bool = True
     ) -> tuple[bool, str]:
         """Run a command and return (success, output)."""
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"🔄 Phase: {phase_name}")
         print(f"Command: {' '.join(cmd)}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         try:
             result = subprocess.run(
@@ -173,7 +173,11 @@ class TestRunner:
         if not success:
             print("⚠️  Mutation testing had issues (this is optional)")
             # Update the last result to show as passed (optional)
-            self.results[-1] = ("Mutation Testing (mutmut run)", True, "Skipped due to mutmut internal error")
+            self.results[-1] = (
+                "Mutation Testing (mutmut run)",
+                True,
+                "Skipped due to mutmut internal error",
+            )
             return True
 
         # Show results
@@ -187,9 +191,9 @@ class TestRunner:
     def print_summary(self):
         """Print test summary."""
         elapsed = time.time() - self.start_time
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("📊 TEST SUMMARY")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"Total time: {elapsed:.1f}s")
         print()
 
@@ -200,12 +204,12 @@ class TestRunner:
             if not success:
                 all_passed = False
 
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         if all_passed:
             print("🎉 ALL PHASES PASSED!")
         else:
             print("💥 SOME PHASES FAILED")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         return all_passed
 
@@ -216,12 +220,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument(
-        "--lint", action="store_true", help="Run only linting phase"
-    )
-    parser.add_argument(
-        "--unit", action="store_true", help="Run only unit tests phase"
-    )
+    parser.add_argument("--lint", action="store_true", help="Run only linting phase")
+    parser.add_argument("--unit", action="store_true", help="Run only unit tests phase")
     parser.add_argument(
         "--coverage", action="store_true", help="Run only coverage phase"
     )
@@ -255,14 +255,20 @@ def main():
             runner.run_command(["pip", "install", dep], f"Install {dep}")
 
     # Determine which phases to run
-    run_lint = args.lint or args.ci or not any(
-        [args.lint, args.unit, args.coverage, args.mutation]
+    run_lint = (
+        args.lint
+        or args.ci
+        or not any([args.lint, args.unit, args.coverage, args.mutation])
     )
-    run_unit = args.unit or args.ci or not any(
-        [args.lint, args.unit, args.coverage, args.mutation]
+    run_unit = (
+        args.unit
+        or args.ci
+        or not any([args.lint, args.unit, args.coverage, args.mutation])
     )
-    run_coverage = args.coverage or args.ci or not any(
-        [args.lint, args.unit, args.coverage, args.mutation]
+    run_coverage = (
+        args.coverage
+        or args.ci
+        or not any([args.lint, args.unit, args.coverage, args.mutation])
     )
     run_mutation = args.mutation or not any(
         [args.lint, args.unit, args.coverage, args.mutation]

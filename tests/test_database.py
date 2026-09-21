@@ -74,6 +74,34 @@ class DatabaseTests(unittest.TestCase):
         stats = self.db.get_subscription_stats()
         self.assertIn("basic", stats)
         self.assertEqual(stats["basic"]["active_count"], 1)
+        self.assertEqual(stats["basic"]["total_count"], 1)
+        self.assertEqual(stats["basic"]["expired_count"], 0)
+
+    def test_subscription_status_counts(self):
+        from datetime import datetime, timedelta, timezone
+
+        # Active subscription (future end date)
+        self.db.create_subscription(user_id=1, tariff_id="basic")
+
+        # Expired subscription (past end date, still status='active')
+        past = datetime.now(timezone.utc) - timedelta(days=1)
+        self.db.create_subscription(user_id=1, tariff_id="basic", ends_at=past)
+
+        # Cancelled subscription
+        cancelled = self.db.create_subscription(user_id=1, tariff_id="premium")
+        self.db.cancel_subscription(cancelled["id"], 1)
+
+        self.assertEqual(self.db.get_total_subscription_count(), 3)
+        self.assertEqual(self.db.get_active_subscription_count(), 1)
+        self.assertEqual(self.db.get_expired_subscription_count(), 1)
+
+        stats = self.db.get_subscription_stats()
+        self.assertEqual(stats["basic"]["total_count"], 2)
+        self.assertEqual(stats["basic"]["active_count"], 1)
+        self.assertEqual(stats["basic"]["expired_count"], 1)
+        self.assertEqual(stats["premium"]["total_count"], 1)
+        self.assertEqual(stats["premium"]["active_count"], 0)
+        self.assertEqual(stats["premium"]["expired_count"], 0)
 
     def test_populate_missing_panel_subscription_ids(self):
         class DummyXController:

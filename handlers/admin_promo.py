@@ -56,7 +56,9 @@ async def handle_admin_promo_create_start(
 async def handle_admin_promo_create_code(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_CODE or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get("state") != STATE_PROMO_CODE or not context.user_data.get(
+        "admin_promo_create"
+    ):
         return
 
     code = update.message.text.strip().upper()
@@ -77,7 +79,9 @@ async def handle_admin_promo_create_code(
 async def handle_admin_promo_create_discount(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_DISCOUNT or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get(
+        "state"
+    ) != STATE_PROMO_DISCOUNT or not context.user_data.get("admin_promo_create"):
         return
 
     try:
@@ -106,7 +110,9 @@ async def handle_admin_promo_create_discount(
 async def handle_admin_promo_create_days(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_DAYS or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get("state") != STATE_PROMO_DAYS or not context.user_data.get(
+        "admin_promo_create"
+    ):
         return
 
     try:
@@ -136,7 +142,9 @@ async def handle_admin_promo_create_days(
 async def handle_admin_promo_create_valid_from(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_VALID_FROM or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get(
+        "state"
+    ) != STATE_PROMO_VALID_FROM or not context.user_data.get("admin_promo_create"):
         return
 
     try:
@@ -167,7 +175,9 @@ async def handle_admin_promo_create_valid_from(
 async def handle_admin_promo_create_valid_until(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_VALID_UNTIL or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get(
+        "state"
+    ) != STATE_PROMO_VALID_UNTIL or not context.user_data.get("admin_promo_create"):
         return
 
     try:
@@ -199,7 +209,9 @@ async def handle_admin_promo_create_valid_until(
 async def handle_admin_promo_create_max_activations(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_MAX_ACTIVATIONS or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get(
+        "state"
+    ) != STATE_PROMO_MAX_ACTIVATIONS or not context.user_data.get("admin_promo_create"):
         return
 
     try:
@@ -230,7 +242,9 @@ async def handle_admin_promo_create_max_activations(
 async def handle_admin_promo_create_tariffs(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_TARIFFS or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get(
+        "state"
+    ) != STATE_PROMO_TARIFFS or not context.user_data.get("admin_promo_create"):
         return
 
     tariffs_input = update.message.text.strip().lower()
@@ -268,7 +282,9 @@ async def handle_admin_promo_create_tariffs(
 async def handle_admin_promo_create_text(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_TEXT or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get("state") != STATE_PROMO_TEXT or not context.user_data.get(
+        "admin_promo_create"
+    ):
         return
 
     activation_text = update.message.text.strip()
@@ -297,7 +313,9 @@ async def handle_admin_promo_create_text(
 async def handle_admin_promo_create_idempotent(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
-    if context.user_data.get("state") != STATE_PROMO_IDEMPOTENT or not context.user_data.get("admin_promo_create"):
+    if context.user_data.get(
+        "state"
+    ) != STATE_PROMO_IDEMPOTENT or not context.user_data.get("admin_promo_create"):
         return
 
     answer = update.message.text.strip().lower()
@@ -378,7 +396,11 @@ async def handle_admin_promo_edit(
 
 
 async def handle_admin_promo_edit_field(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, promo_id: str, field: str
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    promo_id: str,
+    field: str,
 ):
     """Prompt admin to enter new value for a promo code field."""
     query = update.callback_query
@@ -459,7 +481,12 @@ async def handle_admin_promo_edit_field_value(
                 new_value = None
             else:
                 from datetime import datetime, timezone
-                new_value = datetime.strptime(new_value, "%Y-%m-%d").replace(tzinfo=timezone.utc).isoformat()
+
+                new_value = (
+                    datetime.strptime(new_value, "%Y-%m-%d")
+                    .replace(tzinfo=timezone.utc)
+                    .isoformat()
+                )
         elif field == "applicable_tariffs":
             if new_value.lower() == "all":
                 new_value = None
@@ -470,6 +497,7 @@ async def handle_admin_promo_edit_field_value(
                     if tariff not in valid_tariffs:
                         raise ValueError(f"Неизвестный тариф: {tariff}")
                 import json
+
                 new_value = json.dumps(tariffs_list)
         elif field == "is_idempotent":
             if new_value.lower() in ["да", "yes", "true", "1"]:
@@ -502,9 +530,7 @@ async def handle_admin_promo_edit_field_value(
     promo = db.get_promo_code_by_id(int(promo_id))
     _, markup = build_promo_detail(promo)
     await update.message.reply_text(
-        "✅ Поле обновлено!\n\n",
-        parse_mode="HTML",
-        reply_markup=markup
+        "✅ Поле обновлено!\n\n", parse_mode="HTML", reply_markup=markup
     )
 
 
@@ -583,10 +609,7 @@ async def handle_admin_promo_find(
     query = update.callback_query
     context.user_data["state"] = STATE_PROMO_CODE
     context.user_data["admin_promo_find"] = True
-    text = (
-        "🔍 <b>Найти промокод</b>\n\n"
-        "Введите код промокода для поиска:"
-    )
+    text = "🔍 <b>Найти промокод</b>\n\nВведите код промокода для поиска:"
     keyboard = [[back_btn("admin_promos")]]
     await query.edit_message_text(
         text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)

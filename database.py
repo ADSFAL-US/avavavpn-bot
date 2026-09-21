@@ -150,7 +150,9 @@ class Database:
         try:
             cursor.execute("SELECT panel_sub_token FROM subscriptions LIMIT 1")
         except sqlite3.OperationalError:
-            logger.warning("panel_sub_token column missing from subscriptions, expected if DB recreated")
+            logger.warning(
+                "panel_sub_token column missing from subscriptions, expected if DB recreated"
+            )
 
         # Add test_configs_enabled column
         try:
@@ -553,10 +555,30 @@ class Database:
         return cursor.fetchone()["count"]
 
     def get_active_subscription_count(self):
-        """Get count of active subscriptions."""
+        """Get count of active (non-expired) subscriptions."""
         cursor = self.conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
         cursor.execute(
-            "SELECT COUNT(*) as count FROM subscriptions WHERE status = 'active'"
+            """SELECT COUNT(*) as count FROM subscriptions
+               WHERE status = 'active' AND (ends_at IS NULL OR ends_at >= ?)""",
+            (now,),
+        )
+        return cursor.fetchone()["count"]
+
+    def get_total_subscription_count(self):
+        """Get total count of subscriptions (all statuses)."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT COUNT(*) as count FROM subscriptions")
+        return cursor.fetchone()["count"]
+
+    def get_expired_subscription_count(self):
+        """Get count of expired subscriptions (active status but ends_at in the past)."""
+        cursor = self.conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
+        cursor.execute(
+            """SELECT COUNT(*) as count FROM subscriptions
+               WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at < ?""",
+            (now,),
         )
         return cursor.fetchone()["count"]
 
@@ -695,7 +717,8 @@ class Database:
         discount = (row["pending_discount_percent"] or 0) if row else 0
 
         cursor.execute(
-            "UPDATE users SET pending_discount_percent = 0 WHERE user_id = ?", (user_id,)
+            "UPDATE users SET pending_discount_percent = 0 WHERE user_id = ?",
+            (user_id,),
         )
         self.conn.commit()
         return discount
@@ -707,9 +730,7 @@ class Database:
         or no subscription.
         """
         cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT referral_days FROM users WHERE user_id = ?", (user_id,)
-        )
+        cursor.execute("SELECT referral_days FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         if not row:
             return 0
@@ -772,19 +793,46 @@ class Database:
         return True
 
     def get_subscription_stats(self):
-        """Get subscription statistics."""
+        """Get subscription statistics per tariff, split by status.
+
+        Each tariff entry contains:
+        - name: tariff display name
+        - total_count: all subscriptions for the tariff (any status)
+        - active_count: active and not yet expired
+        - expired_count: active status but ends_at in the past
+        """
         cursor = self.conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
 
         stats = {}
         for tariff_id, tariff in TARIFFS.items():
             cursor.execute(
-                "SELECT COUNT(*) as count FROM subscriptions WHERE tariff_id = ? AND status = 'active'",
+                "SELECT COUNT(*) as count FROM subscriptions WHERE tariff_id = ?",
                 (tariff_id,),
             )
-            row = cursor.fetchone()
+            total_row = cursor.fetchone()
+
+            cursor.execute(
+                """SELECT COUNT(*) as count FROM subscriptions
+                   WHERE tariff_id = ? AND status = 'active'
+                   AND (ends_at IS NULL OR ends_at >= ?)""",
+                (tariff_id, now),
+            )
+            active_row = cursor.fetchone()
+
+            cursor.execute(
+                """SELECT COUNT(*) as count FROM subscriptions
+                   WHERE tariff_id = ? AND status = 'active'
+                   AND ends_at IS NOT NULL AND ends_at < ?""",
+                (tariff_id, now),
+            )
+            expired_row = cursor.fetchone()
+
             stats[tariff_id] = {
                 "name": tariff["name"],
-                "active_count": row["count"] if row else 0,
+                "total_count": total_row["count"] if total_row else 0,
+                "active_count": active_row["count"] if active_row else 0,
+                "expired_count": expired_row["count"] if expired_row else 0,
             }
 
         return stats
@@ -966,10 +1014,9 @@ class Database:
 
         # Check max activations (only for non-idempotent promos, or count all activations)
         # If idempotent with max_activations=1, the check above already caught it
-        if (
-            not promo.get("is_idempotent", 0)
-            and promo.get("current_activations", 0) >= promo.get("max_activations", 1)
-        ):
+        if not promo.get("is_idempotent", 0) and promo.get(
+            "current_activations", 0
+        ) >= promo.get("max_activations", 1):
             return {"success": False, "error": "Промокод исчерпал лимит активаций"}
 
         # Check tariff restrictions
@@ -1186,12 +1233,14 @@ def get_database() -> "Database":
 # For backward compatibility - create a module-level db object that can be patched
 class _DatabaseProxy:
     """Proxy to the global database instance that allows patching."""
+
     def __getattr__(self, name):
         # Only try to get the database if it's already initialized
         if _db_instance is not None:
             return getattr(_db_instance, name)
         # Return a mock-like object for patching
         from unittest.mock import MagicMock
+
         return MagicMock()
 
 

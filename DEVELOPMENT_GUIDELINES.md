@@ -125,11 +125,9 @@ from utils import back_btn, btn
 ```python
 # Good
 async def handle_subscribe(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    user_id: int,
-    tariff_id: str
+    update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, tariff_id: str
 ) -> None: ...
+
 
 # Bad
 async def handle_subscribe(update, context, user_id, tariff_id): ...
@@ -275,11 +273,11 @@ Use `config.SOME_SETTING` everywhere. **No hardcoded values.**
 logger = logging.getLogger(__name__)
 
 # Levels
-logger.debug("Detailed debug info")      # Development only
-logger.info("Important lifecycle event") # Payment created, sub extended
-logger.warning("Recoverable issue")      # Retryable, non-critical
-logger.error("Failed operation")         # User-facing failure
-logger.exception("Unexpected error")     # With traceback
+logger.debug("Detailed debug info")  # Development only
+logger.info("Important lifecycle event")  # Payment created, sub extended
+logger.warning("Recoverable issue")  # Retryable, non-critical
+logger.error("Failed operation")  # User-facing failure
+logger.exception("Unexpected error")  # With traceback
 ```
 
 ---

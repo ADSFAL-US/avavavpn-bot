@@ -48,9 +48,28 @@ class FakeDB:
     def get_subscription_stats(self):
         return {}
 
-    def create_promo_code(self, code, discount_percent=0, free_days=0, valid_from=None,
-                          valid_until=None, max_activations=1, applicable_tariffs=None,
-                          activation_text=None, is_idempotent=0, is_active=1):
+    def get_total_subscription_count(self):
+        return 0
+
+    def get_active_subscription_count(self):
+        return 0
+
+    def get_expired_subscription_count(self):
+        return 0
+
+    def create_promo_code(
+        self,
+        code,
+        discount_percent=0,
+        free_days=0,
+        valid_from=None,
+        valid_until=None,
+        max_activations=1,
+        applicable_tariffs=None,
+        activation_text=None,
+        is_idempotent=0,
+        is_active=1,
+    ):
         promo_id = self.next_promo_id
         self.next_promo_id += 1
         promo = {
@@ -176,7 +195,7 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
         # Reset the fake database before each test
         fake_db_module.db.promo_codes = {}
         fake_db_module.db.next_promo_id = 1
-        
+
         self.context = SimpleNamespace(user_data={})
         self.update = DummyUpdate()
         self.update.callback_query.data = "admin_promos"
@@ -186,32 +205,45 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_handle_admin_promos_shows_menu(self):
         await admin_promo_handlers.handle_admin_promos(self.update, self.context, 12345)
         self.assertEqual(len(self.update.callback_query.edited_messages), 1)
-        self.assertIn("Управление промокодами", self.update.callback_query.edited_messages[0]["text"])
+        self.assertIn(
+            "Управление промокодами",
+            self.update.callback_query.edited_messages[0]["text"],
+        )
 
     # ===== Promo Creation Flow =====
     async def test_handle_admin_promo_create_start_sets_state(self):
-        await admin_promo_handlers.handle_admin_promo_create_start(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_start(
+            self.update, self.context, 12345
+        )
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_CODE)
         self.assertTrue(self.context.user_data.get("admin_promo_create"))
-        self.assertIn("Создать промокод", self.update.callback_query.edited_messages[0]["text"])
+        self.assertIn(
+            "Создать промокод", self.update.callback_query.edited_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_create_code_valid(self):
         self.context.user_data["state"] = STATE_PROMO_CODE
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "TESTCODE"
 
-        await admin_promo_handlers.handle_admin_promo_create_code(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_code(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_DISCOUNT)
         self.assertEqual(self.context.user_data["promo_code"], "TESTCODE")
-        self.assertIn("Введите процент скидки", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Введите процент скидки", self.update.message.replied_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_create_code_invalid_state(self):
         self.context.user_data["state"] = STATE_PROMO_DISCOUNT
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "TESTCODE"
 
-        await admin_promo_handlers.handle_admin_promo_create_code(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_code(
+            self.update, self.context, 12345
+        )
 
         # Should not process - wrong state
         self.assertEqual(len(self.update.message.replied_messages), 0)
@@ -220,7 +252,9 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.context.user_data["state"] = STATE_PROMO_CODE
         self.update.message.text = "TESTCODE"
 
-        await admin_promo_handlers.handle_admin_promo_create_code(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_code(
+            self.update, self.context, 12345
+        )
 
         # Should not process - missing admin_promo_create flag
         self.assertEqual(len(self.update.message.replied_messages), 0)
@@ -231,20 +265,30 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.context.user_data["promo_code"] = "TESTCODE"
         self.update.message.text = "20"
 
-        await admin_promo_handlers.handle_admin_promo_create_discount(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_discount(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_DAYS)
         self.assertEqual(self.context.user_data["promo_discount"], 20)
-        self.assertIn("Введите количество бесплатных дней", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Введите количество бесплатных дней",
+            self.update.message.replied_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_create_discount_invalid(self):
         self.context.user_data["state"] = STATE_PROMO_DISCOUNT
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "150"
 
-        await admin_promo_handlers.handle_admin_promo_create_discount(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_discount(
+            self.update, self.context, 12345
+        )
 
-        self.assertIn("Введите целое число от 0 до 100", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Введите целое число от 0 до 100",
+            self.update.message.replied_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_create_days_valid(self):
         self.context.user_data["state"] = STATE_PROMO_DAYS
@@ -253,40 +297,61 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.context.user_data["promo_discount"] = 20
         self.update.message.text = "30"
 
-        await admin_promo_handlers.handle_admin_promo_create_days(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_days(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_VALID_FROM)
         self.assertEqual(self.context.user_data["promo_days"], 30)
-        self.assertIn("Введите дату начала действия", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Введите дату начала действия",
+            self.update.message.replied_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_create_valid_from_valid(self):
         self.context.user_data["state"] = STATE_PROMO_VALID_FROM
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "2025-01-01"
 
-        await admin_promo_handlers.handle_admin_promo_create_valid_from(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_valid_from(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_VALID_UNTIL)
-        self.assertEqual(self.context.user_data["promo_valid_from"], "2025-01-01T00:00:00+00:00")
-        self.assertIn("Введите дату окончания действия", self.update.message.replied_messages[0]["text"])
+        self.assertEqual(
+            self.context.user_data["promo_valid_from"], "2025-01-01T00:00:00+00:00"
+        )
+        self.assertIn(
+            "Введите дату окончания действия",
+            self.update.message.replied_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_create_valid_until_valid(self):
         self.context.user_data["state"] = STATE_PROMO_VALID_UNTIL
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "2025-12-31"
 
-        await admin_promo_handlers.handle_admin_promo_create_valid_until(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_valid_until(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_MAX_ACTIVATIONS)
-        self.assertEqual(self.context.user_data["promo_valid_until"], "2025-12-31T00:00:00+00:00")
-        self.assertIn("Введите максимальное количество активаций", self.update.message.replied_messages[0]["text"])
+        self.assertEqual(
+            self.context.user_data["promo_valid_until"], "2025-12-31T00:00:00+00:00"
+        )
+        self.assertIn(
+            "Введите максимальное количество активаций",
+            self.update.message.replied_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_create_max_activations_valid(self):
         self.context.user_data["state"] = STATE_PROMO_MAX_ACTIVATIONS
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "100"
 
-        await admin_promo_handlers.handle_admin_promo_create_max_activations(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_max_activations(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_TARIFFS)
         self.assertEqual(self.context.user_data["promo_max_activations"], 100)
@@ -297,49 +362,69 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "all"
 
-        await admin_promo_handlers.handle_admin_promo_create_tariffs(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_tariffs(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_TEXT)
         self.assertIsNone(self.context.user_data["promo_tariffs"])
-        self.assertIn("Введите текст активации", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Введите текст активации", self.update.message.replied_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_create_tariffs_specific(self):
         self.context.user_data["state"] = STATE_PROMO_TARIFFS
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "basic,premium"
 
-        await admin_promo_handlers.handle_admin_promo_create_tariffs(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_tariffs(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_TEXT)
         import json
-        self.assertEqual(json.loads(self.context.user_data["promo_tariffs"]), ["basic", "premium"])
+
+        self.assertEqual(
+            json.loads(self.context.user_data["promo_tariffs"]), ["basic", "premium"]
+        )
 
     async def test_handle_admin_promo_create_tariffs_invalid(self):
         self.context.user_data["state"] = STATE_PROMO_TARIFFS
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "invalid_tariff"
 
-        await admin_promo_handlers.handle_admin_promo_create_tariffs(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_tariffs(
+            self.update, self.context, 12345
+        )
 
-        self.assertIn("Неизвестный тариф", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Неизвестный тариф", self.update.message.replied_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_create_text(self):
         self.context.user_data["state"] = STATE_PROMO_TEXT
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "Welcome bonus!"
 
-        await admin_promo_handlers.handle_admin_promo_create_text(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_text(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_IDEMPOTENT)
         self.assertEqual(self.context.user_data["promo_text"], "Welcome bonus!")
-        self.assertIn("Можно ли активировать несколько раз", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Можно ли активировать несколько раз",
+            self.update.message.replied_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_create_text_empty(self):
         self.context.user_data["state"] = STATE_PROMO_TEXT
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = ""
 
-        await admin_promo_handlers.handle_admin_promo_create_text(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_text(
+            self.update, self.context, 12345
+        )
 
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_IDEMPOTENT)
         self.assertIsNone(self.context.user_data["promo_text"])
@@ -357,11 +442,15 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.context.user_data["promo_text"] = "Welcome!"
         self.update.message.text = "да"
 
-        await admin_promo_handlers.handle_admin_promo_create_idempotent(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_idempotent(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertFalse(self.context.user_data.get("admin_promo_create"))
-        self.assertIn("Промокод создан", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Промокод создан", self.update.message.replied_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_create_idempotent_no(self):
         self.context.user_data["state"] = STATE_PROMO_IDEMPOTENT
@@ -376,255 +465,398 @@ class AdminPromoHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.context.user_data["promo_text"] = "Welcome!"
         self.update.message.text = "нет"
 
-        await admin_promo_handlers.handle_admin_promo_create_idempotent(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_idempotent(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertFalse(self.context.user_data.get("admin_promo_create"))
-        self.assertIn("Промокод создан", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Промокод создан", self.update.message.replied_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_create_idempotent_invalid(self):
         self.context.user_data["state"] = STATE_PROMO_IDEMPOTENT
         self.context.user_data["admin_promo_create"] = True
         self.update.message.text = "maybe"
 
-        await admin_promo_handlers.handle_admin_promo_create_idempotent(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_create_idempotent(
+            self.update, self.context, 12345
+        )
 
-        self.assertIn("Ответьте 'да' или 'нет'", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Ответьте 'да' или 'нет'", self.update.message.replied_messages[0]["text"]
+        )
 
     # ===== Promo List =====
     async def test_handle_admin_promos_list_empty(self):
-        await admin_promo_handlers.handle_admin_promos_list(self.update, self.context, 12345)
-        self.assertIn("Промокоды не найдены", self.update.callback_query.edited_messages[0]["text"])
+        await admin_promo_handlers.handle_admin_promos_list(
+            self.update, self.context, 12345
+        )
+        self.assertIn(
+            "Промокоды не найдены",
+            self.update.callback_query.edited_messages[0]["text"],
+        )
 
     async def test_handle_admin_promos_list_with_promos(self):
         # Add a promo code
         fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
-        await admin_promo_handlers.handle_admin_promos_list(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promos_list(
+            self.update, self.context, 12345
+        )
         self.assertIn("TEST1", self.update.callback_query.edited_messages[0]["text"])
         self.assertIn("10%", self.update.callback_query.edited_messages[0]["text"])
 
     # ===== Promo Find =====
     async def test_handle_admin_promo_find_sets_state(self):
-        await admin_promo_handlers.handle_admin_promo_find(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_find(
+            self.update, self.context, 12345
+        )
         self.assertEqual(self.context.user_data["state"], STATE_PROMO_CODE)
         self.assertTrue(self.context.user_data.get("admin_promo_find"))
-        self.assertIn("Найти промокод", self.update.callback_query.edited_messages[0]["text"])
+        self.assertIn(
+            "Найти промокод", self.update.callback_query.edited_messages[0]["text"]
+        )
 
     # ===== Promo Stats =====
     async def test_handle_admin_promo_stats_empty(self):
-        await admin_promo_handlers.handle_admin_promo_stats(self.update, self.context, 12345)
-        self.assertIn("Всего промокодов: <b>0</b>", self.update.callback_query.edited_messages[0]["text"])
+        await admin_promo_handlers.handle_admin_promo_stats(
+            self.update, self.context, 12345
+        )
+        self.assertIn(
+            "Всего промокодов: <b>0</b>",
+            self.update.callback_query.edited_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_stats_with_promos(self):
-        fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7, is_active=1)
-        fake_db_module.db.create_promo_code("TEST2", discount_percent=20, free_days=0, is_active=0)
-        await admin_promo_handlers.handle_admin_promo_stats(self.update, self.context, 12345)
-        self.assertIn("Всего промокодов: <b>2</b>", self.update.callback_query.edited_messages[0]["text"])
-        self.assertIn("Активных: <b>1</b>", self.update.callback_query.edited_messages[0]["text"])
+        fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7, is_active=1
+        )
+        fake_db_module.db.create_promo_code(
+            "TEST2", discount_percent=20, free_days=0, is_active=0
+        )
+        await admin_promo_handlers.handle_admin_promo_stats(
+            self.update, self.context, 12345
+        )
+        self.assertIn(
+            "Всего промокодов: <b>2</b>",
+            self.update.callback_query.edited_messages[0]["text"],
+        )
+        self.assertIn(
+            "Активных: <b>1</b>", self.update.callback_query.edited_messages[0]["text"]
+        )
 
     # ===== Promo Detail =====
     async def test_handle_admin_promo_detail(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.update.callback_query.data = f"admin_promo_detail_{promo_id}"
-        await admin_promo_handlers.handle_admin_promo_detail(self.update, self.context, 12345, str(promo_id))
+        await admin_promo_handlers.handle_admin_promo_detail(
+            self.update, self.context, 12345, str(promo_id)
+        )
         self.assertIn("TEST1", self.update.callback_query.edited_messages[0]["text"])
         self.assertIn("10%", self.update.callback_query.edited_messages[0]["text"])
 
     # ===== Promo Edit Menu =====
     async def test_handle_admin_promo_edit(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.update.callback_query.data = f"admin_promo_edit_{promo_id}"
-        await admin_promo_handlers.handle_admin_promo_edit(self.update, self.context, 12345, str(promo_id))
-        self.assertIn("Редактировать промокод", self.update.callback_query.edited_messages[0]["text"])
+        await admin_promo_handlers.handle_admin_promo_edit(
+            self.update, self.context, 12345, str(promo_id)
+        )
+        self.assertIn(
+            "Редактировать промокод",
+            self.update.callback_query.edited_messages[0]["text"],
+        )
 
     # ===== Promo Delete =====
     async def test_handle_admin_promo_delete_success(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.update.callback_query.data = f"admin_promo_delete_{promo_id}"
-        await admin_promo_handlers.handle_admin_promo_delete(self.update, self.context, 12345, str(promo_id))
-        self.assertIn("Промокод удален", self.update.callback_query.edited_messages[0]["text"])
+        await admin_promo_handlers.handle_admin_promo_delete(
+            self.update, self.context, 12345, str(promo_id)
+        )
+        self.assertIn(
+            "Промокод удален", self.update.callback_query.edited_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_delete_not_found(self):
         self.update.callback_query.data = "admin_promo_delete_999"
-        await admin_promo_handlers.handle_admin_promo_delete(self.update, self.context, 12345, "999")
-        self.assertIn("Ошибка удаления", self.update.callback_query.edited_messages[0]["text"])
+        await admin_promo_handlers.handle_admin_promo_delete(
+            self.update, self.context, 12345, "999"
+        )
+        self.assertIn(
+            "Ошибка удаления", self.update.callback_query.edited_messages[0]["text"]
+        )
 
     # ===== Promo Activations =====
     async def test_handle_admin_promo_activations_empty(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.update.callback_query.data = f"admin_promo_activations_{promo_id}"
-        await admin_promo_handlers.handle_admin_promo_activations(self.update, self.context, 12345, str(promo_id))
-        self.assertIn("Активаций нет", self.update.callback_query.edited_messages[0]["text"])
+        await admin_promo_handlers.handle_admin_promo_activations(
+            self.update, self.context, 12345, str(promo_id)
+        )
+        self.assertIn(
+            "Активаций нет", self.update.callback_query.edited_messages[0]["text"]
+        )
 
     # ===== Promo Toggle =====
     async def test_handle_admin_promo_toggle_active(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7, is_active=1)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7, is_active=1
+        )
         self.update.callback_query.data = f"admin_promo_toggle_{promo_id}"
-        await admin_promo_handlers.handle_admin_promo_toggle_active(self.update, self.context, 12345, str(promo_id))
-        self.assertIn("Неактивен", self.update.callback_query.edited_messages[0]["text"])
+        await admin_promo_handlers.handle_admin_promo_toggle_active(
+            self.update, self.context, 12345, str(promo_id)
+        )
+        self.assertIn(
+            "Неактивен", self.update.callback_query.edited_messages[0]["text"]
+        )
 
     # ===== Promo Edit Field =====
     async def test_handle_admin_promo_edit_field(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
-        self.update.callback_query.data = f"admin_promo_edit_field_{promo_id}_discount_percent"
-        await admin_promo_handlers.handle_admin_promo_edit_field(self.update, self.context, 12345, str(promo_id), "discount_percent")
-        self.assertEqual(self.context.user_data["state"], "admin_promo_edit_discount_percent")
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
+        self.update.callback_query.data = (
+            f"admin_promo_edit_field_{promo_id}_discount_percent"
+        )
+        await admin_promo_handlers.handle_admin_promo_edit_field(
+            self.update, self.context, 12345, str(promo_id), "discount_percent"
+        )
+        self.assertEqual(
+            self.context.user_data["state"], "admin_promo_edit_discount_percent"
+        )
         self.assertEqual(self.context.user_data["admin_promo_edit_id"], str(promo_id))
-        self.assertEqual(self.context.user_data["admin_promo_edit_field"], "discount_percent")
-        self.assertIn("Редактирование: Скидка", self.update.callback_query.edited_messages[0]["text"])
+        self.assertEqual(
+            self.context.user_data["admin_promo_edit_field"], "discount_percent"
+        )
+        self.assertIn(
+            "Редактирование: Скидка",
+            self.update.callback_query.edited_messages[0]["text"],
+        )
 
     # ===== Promo Edit Field Value =====
     async def test_handle_admin_promo_edit_field_value_discount(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_discount_percent"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "discount_percent"
         self.update.message.text = "25"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_invalid_discount(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_discount_percent"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "discount_percent"
         self.update.message.text = "150"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
-        self.assertIn("Скидка должна быть от 0 до 100", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Скидка должна быть от 0 до 100",
+            self.update.message.replied_messages[0]["text"],
+        )
 
     async def test_handle_admin_promo_edit_field_value_code(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_code"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "code"
         self.update.message.text = "NEWCODE"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_valid_from(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_valid_from"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "valid_from"
         self.update.message.text = "2025-06-15"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_valid_from_none(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_valid_from"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "valid_from"
         self.update.message.text = "none"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_tariffs_all(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_applicable_tariffs"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "applicable_tariffs"
         self.update.message.text = "all"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_tariffs_specific(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_applicable_tariffs"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "applicable_tariffs"
         self.update.message.text = "basic,premium"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_tariffs_invalid(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_applicable_tariffs"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "applicable_tariffs"
         self.update.message.text = "invalid"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
-        self.assertIn("Неизвестный тариф", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Неизвестный тариф", self.update.message.replied_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_edit_field_value_idempotent_yes(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_is_idempotent"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "is_idempotent"
         self.update.message.text = "да"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_idempotent_no(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_is_idempotent"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "is_idempotent"
         self.update.message.text = "нет"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_idempotent_invalid(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_is_idempotent"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "is_idempotent"
         self.update.message.text = "maybe"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
-        self.assertIn("Ответьте 'да' или 'нет'", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Ответьте 'да' или 'нет'", self.update.message.replied_messages[0]["text"]
+        )
 
     async def test_handle_admin_promo_edit_field_value_active(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_is_active"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "is_active"
         self.update.message.text = "0"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
         self.assertIsNone(self.context.user_data.get("state"))
         self.assertIn("Поле обновлено", self.update.message.replied_messages[0]["text"])
 
     async def test_handle_admin_promo_edit_field_value_active_invalid(self):
-        promo_id = fake_db_module.db.create_promo_code("TEST1", discount_percent=10, free_days=7)
+        promo_id = fake_db_module.db.create_promo_code(
+            "TEST1", discount_percent=10, free_days=7
+        )
         self.context.user_data["state"] = "admin_promo_edit_is_active"
         self.context.user_data["admin_promo_edit_id"] = str(promo_id)
         self.context.user_data["admin_promo_edit_field"] = "is_active"
         self.update.message.text = "2"
 
-        await admin_promo_handlers.handle_admin_promo_edit_field_value(self.update, self.context, 12345)
+        await admin_promo_handlers.handle_admin_promo_edit_field_value(
+            self.update, self.context, 12345
+        )
 
-        self.assertIn("Статус должен быть 0 или 1", self.update.message.replied_messages[0]["text"])
+        self.assertIn(
+            "Статус должен быть 0 или 1",
+            self.update.message.replied_messages[0]["text"],
+        )
 
 
 if __name__ == "__main__":

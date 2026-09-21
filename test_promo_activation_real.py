@@ -10,6 +10,7 @@ Tests the complete flow implemented in database.py:
 6. Non-existent promo code handling
 7. Expired promo code handling
 """
+
 import os
 import tempfile
 import unittest
@@ -23,7 +24,7 @@ class TestPromoActivationRealDB(unittest.TestCase):
 
     def setUp(self):
         """Create a fresh database for each test."""
-        self.db_path = tempfile.gettempdir() + f'/test_avava_promo_{id(self)}.db'
+        self.db_path = tempfile.gettempdir() + f"/test_avava_promo_{id(self)}.db"
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
         self.db = Database(self.db_path)
@@ -36,7 +37,9 @@ class TestPromoActivationRealDB(unittest.TestCase):
 
     def _create_user(self, user_id=123):
         """Helper to create a test user."""
-        return self.db.get_or_create_user({'user_id': user_id, 'first_name': 'Test', 'username': f'testuser{user_id}'})
+        return self.db.get_or_create_user(
+            {"user_id": user_id, "first_name": "Test", "username": f"testuser{user_id}"}
+        )
 
     def _create_promo(self, discount_percent=20, free_days=3, is_idempotent=0):
         """Helper to create a promo code."""
@@ -44,14 +47,14 @@ class TestPromoActivationRealDB(unittest.TestCase):
             code=f"TEST{discount_percent}" if discount_percent > 0 else "FREEDAY",
             discount_percent=discount_percent,
             free_days=free_days,
-            is_idempotent=is_idempotent
+            is_idempotent=is_idempotent,
         )
 
     def test_activate_promo_stores_discount(self):
         """Activate promo should store discount_percent on user."""
         # Create user first
         self._create_user()
-        
+
         # Create promo with 20% discount
         self._create_promo(discount_percent=20, free_days=3)
 
@@ -71,7 +74,7 @@ class TestPromoActivationRealDB(unittest.TestCase):
         """Activate promo should store free_days on user."""
         # Create user first
         self._create_user(user_id=456)
-        
+
         # Create promo with 7 free days
         self._create_promo(discount_percent=0, free_days=7)
 
@@ -89,7 +92,7 @@ class TestPromoActivationRealDB(unittest.TestCase):
         """Subscription should apply pending discount from promo activation."""
         # Create user first
         self._create_user()
-        
+
         # Create and activate promo with 25% discount
         self._create_promo(discount_percent=25, free_days=0)
         self.db.activate_promo_code(user_id=123, code="TEST25")
@@ -109,7 +112,7 @@ class TestPromoActivationRealDB(unittest.TestCase):
         """Subscription should apply pending free days from promo activation."""
         # Create user first
         self._create_user()
-        
+
         # Create and activate promo with 3 free days
         self._create_promo(discount_percent=0, free_days=3)
         self.db.activate_promo_code(user_id=123, code="FREEDAY")
@@ -129,7 +132,7 @@ class TestPromoActivationRealDB(unittest.TestCase):
         """Second subscription should not re-apply the same promo."""
         # Create user first
         self._create_user()
-        
+
         # Create and activate promo with 10% discount
         self._create_promo(discount_percent=10, free_days=0)
         self.db.activate_promo_code(user_id=123, code="TEST10")
@@ -149,7 +152,7 @@ class TestPromoActivationIdempotencyRealDB(unittest.TestCase):
 
     def setUp(self):
         """Create a fresh database for each test."""
-        self.db_path = tempfile.gettempdir() + f'/test_avava_idempotent_{id(self)}.db'
+        self.db_path = tempfile.gettempdir() + f"/test_avava_idempotent_{id(self)}.db"
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
         self.db = Database(self.db_path)
@@ -162,7 +165,9 @@ class TestPromoActivationIdempotencyRealDB(unittest.TestCase):
 
     def _create_user(self):
         """Helper to create a test user."""
-        return self.db.get_or_create_user({'user_id': 123, 'first_name': 'Test', 'username': 'testuser'})
+        return self.db.get_or_create_user(
+            {"user_id": 123, "first_name": "Test", "username": "testuser"}
+        )
 
     def _create_promo(self, discount_percent=20, free_days=3, is_idempotent=0):
         """Helper to create a promo code."""
@@ -170,19 +175,20 @@ class TestPromoActivationIdempotencyRealDB(unittest.TestCase):
             code=f"TEST{discount_percent}" if discount_percent > 0 else "FREEDAY",
             discount_percent=discount_percent,
             free_days=free_days,
-            is_idempotent=is_idempotent
+            is_idempotent=is_idempotent,
         )
 
     def _create_idempotent_promo(self):
         """Helper to create an idempotent promo."""
-        return self.db.create_promo_code("IDEMPOTENT", discount_percent=10,
-                                          free_days=5, is_idempotent=1)
+        return self.db.create_promo_code(
+            "IDEMPOTENT", discount_percent=10, free_days=5, is_idempotent=1
+        )
 
     def test_idempotent_promo_cannot_activate_twice(self):
         """Idempotent promo should fail on second activation."""
         # Create user first
         self._create_user()
-        
+
         # Create idempotent promo
         self._create_idempotent_promo()
 
@@ -199,7 +205,7 @@ class TestPromoActivationIdempotencyRealDB(unittest.TestCase):
         """Multiple promo activations should accumulate discounts (capped at 50%)."""
         # Create user first
         self._create_user()
-        
+
         # Create first promo with 20% discount
         self._create_promo(discount_percent=20, free_days=0)
         result1 = self.db.activate_promo_code(user_id=123, code="TEST20")
@@ -219,7 +225,7 @@ class TestPromoActivationIdempotencyRealDB(unittest.TestCase):
         """clear_pending_discount should return and reset the discount."""
         # Create user first
         self._create_user()
-        
+
         # Create and activate promo with 25% discount
         self._create_promo(discount_percent=25, free_days=0)
         self.db.activate_promo_code(user_id=123, code="TEST25")
@@ -236,7 +242,7 @@ class TestPromoActivationIdempotencyRealDB(unittest.TestCase):
         """get_pending_discount should return current discount without modifying it."""
         # Create user first
         self._create_user()
-        
+
         # Initially should be 0
         self.assertEqual(self.db.get_pending_discount(user_id=123), 0)
 
@@ -255,7 +261,7 @@ class TestPromoCodeExistenceRealDB(unittest.TestCase):
 
     def setUp(self):
         """Create a fresh database for each test."""
-        self.db_path = tempfile.gettempdir() + f'/test_avava_nonexist_{id(self)}.db'
+        self.db_path = tempfile.gettempdir() + f"/test_avava_nonexist_{id(self)}.db"
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
         self.db = Database(self.db_path)
@@ -268,13 +274,15 @@ class TestPromoCodeExistenceRealDB(unittest.TestCase):
 
     def _create_user(self):
         """Helper to create a test user."""
-        return self.db.get_or_create_user({'user_id': 123, 'first_name': 'Test', 'username': 'testuser'})
+        return self.db.get_or_create_user(
+            {"user_id": 123, "first_name": "Test", "username": "testuser"}
+        )
 
     def test_activate_nonexistent_promo(self):
         """Should fail when activating a non-existent promo code."""
         # Create user first
         self._create_user()
-        
+
         result = self.db.activate_promo_code(user_id=123, code="NONEXISTENT")
         self.assertFalse(result["success"])
         self.assertEqual(result["error"], "Похоже такого промокода не существует")
@@ -285,7 +293,7 @@ class TestPromoCodeValidityRealDB(unittest.TestCase):
 
     def setUp(self):
         """Create a fresh database for each test."""
-        self.db_path = tempfile.gettempdir() + f'/test_avava_validity_{id(self)}.db'
+        self.db_path = tempfile.gettempdir() + f"/test_avava_validity_{id(self)}.db"
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
         self.db = Database(self.db_path)
@@ -298,17 +306,18 @@ class TestPromoCodeValidityRealDB(unittest.TestCase):
 
     def _create_user(self):
         """Helper to create a test user."""
-        return self.db.get_or_create_user({'user_id': 123, 'first_name': 'Test', 'username': 'testuser'})
+        return self.db.get_or_create_user(
+            {"user_id": 123, "first_name": "Test", "username": "testuser"}
+        )
 
     def test_activate_expired_promo(self):
         """Should fail when activating an expired promo."""
         # Create user first
         self._create_user()
-        
+
         # Create promo that expired yesterday
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-        self.db.create_promo_code("EXPIRED", discount_percent=10,
-                                  valid_until=yesterday)
+        self.db.create_promo_code("EXPIRED", discount_percent=10, valid_until=yesterday)
 
         result = self.db.activate_promo_code(user_id=123, code="EXPIRED")
         self.assertFalse(result["success"])
