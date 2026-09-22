@@ -1,10 +1,12 @@
 # handlers/navigation.py — Main menu navigation, tariffs, subscriptions, referral
+import asyncio
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 import app_context
+import cache
 from database import TARIFFS, db
 from handlers.monitoring import _get_panel_statuses
 from keyboards import (
@@ -15,6 +17,7 @@ from keyboards import (
     build_tariffs_menu,
     build_use_days_menu,
     build_user_node_status,
+    _fetch_whitelist_traffic,
 )
 from utils import (
     back_btn,
@@ -44,9 +47,67 @@ async def handle_menu_tariffs(
 async def handle_menu_subscription(
     update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int
 ):
+    """Show subscription menu with Redis-cached whitelist traffic.
+
+    Fast path: render immediately using cached traffic (or a placeholder
+    if the cache is stale), then refresh in the background and re-render
+    the message with fresh data. This keeps the UI snappy and avoids
+    hammering X-Controller (self-DoS protection).
+    """
     query = update.callback_query
-    text, markup = build_subscription_view(user_id)
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    active_sub = db.get_active_subscription(user_id)
+    panel_sub_id = active_sub.get("panel_subscription_id") if active_sub else None
+
+    cached_wt = None
+    if panel_sub_id:
+        cached_wt = cache.get_json(cache.subscription_whitelist_key(panel_sub_id))
+
+    if cached_wt is not None:
+        # Fresh cache — render immediately, no background refresh needed
+        text, markup = build_subscription_view(user_id, whitelist_traffic=cached_wt)
+        try:
+            await query.edit_message_text(
+                text, parse_mode="HTML", reply_markup=markup
+            )
+        except Exception as e:
+            if "not modified" not in str(e):
+                raise
+        return
+
+    # Stale/missing cache — render instantly with a placeholder
+    text, markup = build_subscription_view(user_id, whitelist_traffic=None)
+    try:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
+    except Exception as e:
+        if "not modified" in str(e):
+            await query.answer("📊 Данные актуальны")
+            return
+        raise
+
+    # Background refresh: fetch fresh traffic, cache it, re-render
+    async def _refresh_and_rerender():
+        try:
+            wt = None
+            if panel_sub_id:
+                wt = await asyncio.to_thread(
+                    _fetch_whitelist_traffic, panel_sub_id
+                )
+            if wt is None:
+                return  # keep placeholder; next open will retry
+            new_text, new_markup = build_subscription_view(
+                user_id, whitelist_traffic=wt
+            )
+            try:
+                await query.edit_message_text(
+                    new_text, parse_mode="HTML", reply_markup=new_markup
+                )
+            except Exception as e:
+                if "not modified" not in str(e):
+                    logger.warning("Failed to re-render subscription view: %s", e)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Background subscription refresh failed: %s", e)
+
+    context.application.create_task(_refresh_and_rerender())
 
 
 async def handle_menu_support(

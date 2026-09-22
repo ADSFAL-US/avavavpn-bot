@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from telegram import InlineKeyboardMarkup
 
 import app_context
+import cache
 import config
 from database import TARIFFS, db
 from utils import back_btn, btn, is_admin, safe_date_format
@@ -221,8 +222,83 @@ def build_tariff_detail(
 
 
 # ===== SUBSCRIPTION VIEW =====
-def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    """Build subscription info view."""
+WHITELIST_LOADING_TEXT = (
+    "\n⏳ <b>Трафик обхода белых списков (глушилки):</b>\n"
+    "<i>Обновляем данные...</i>"
+)
+
+
+def _fetch_whitelist_traffic(panel_sub_id: str) -> dict | None:
+    """Fetch whitelist-bypass traffic from X-Controller (with Redis cache).
+
+    Returns the traffic dict on success, None on failure.
+    """
+    if not app_context.xcontroller:
+        return None
+
+    cache_key = cache.subscription_whitelist_key(panel_sub_id)
+    cached = cache.get_json(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        wt = app_context.xcontroller.get_whitelist_bypass_traffic(panel_sub_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Failed to get whitelist bypass traffic: {e}")
+        return None
+
+    if wt.get("success"):
+        payload = {
+            "used_gb": wt.get("used_gb", 0),
+            "limit_gb": wt.get("limit_gb", 50),
+            "remaining_gb": wt.get("remaining_gb", 50),
+            "configs_count": wt.get("configs_count", 0),
+            "is_exhausted": wt.get("is_exhausted", False),
+        }
+        cache.set_json(cache_key, payload, ttl=config.SUBSCRIPTION_CACHE_TTL)
+        return payload
+    return None
+
+
+def _format_whitelist_traffic(wt: dict | None) -> str:
+    """Render the whitelist-bypass traffic section from a traffic dict."""
+    if wt is None:
+        return (
+            "\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\n"
+            "50.00 / 50.0 ГБ (нет конфигов)"
+        )
+
+    used_wl = wt.get("used_gb", 0)
+    limit_wl = wt.get("limit_gb", 50)
+    remaining_wl = wt.get("remaining_gb", 50)
+    configs_count = wt.get("configs_count", 0)
+    is_exhausted = wt.get("is_exhausted", False)
+
+    percent_wl = min(100, int((used_wl / limit_wl) * 100)) if limit_wl > 0 else 0
+    bar_fill_wl = int(percent_wl / 10)
+    bar_wl = "█" * bar_fill_wl + "░" * (10 - bar_fill_wl)
+
+    status_emoji = "🔴" if is_exhausted else "🟢"
+
+    return (
+        f"\n{status_emoji} <b>Трафик обхода белых списков (глушилки):</b>\n"
+        f"<code>[{bar_wl}] {percent_wl}%</code>\n"
+        f"Использовано: <b>{used_wl:.2f}</b> / {limit_wl:.1f} ГБ\n"
+        f"Осталось: <b>{remaining_wl:.2f}</b> ГБ\n"
+        f"Конфигов: <b>{configs_count}</b>"
+    )
+
+
+def build_subscription_view(
+    user_id: int, whitelist_traffic: dict | None | str = "fetch"
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Build subscription info view.
+
+    whitelist_traffic:
+      - "fetch": fetch from X-Controller (with Redis cache) — legacy behavior
+      - dict:    pre-fetched traffic data (from cache or background job)
+      - None:    no data — render placeholder section
+    """
     active_sub = db.get_active_subscription(user_id)
 
     if not active_sub:
@@ -257,44 +333,24 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         traffic = "\n📊 <b>Трафик:</b> без ограничений\n"
 
     # Whitelist bypass traffic (глушилки)
-    whitelist_traffic = ""
     panel_sub_id = active_sub.get("panel_subscription_id")
-    if panel_sub_id and app_context.xcontroller:
-        try:
-            wt = app_context.xcontroller.get_whitelist_bypass_traffic(panel_sub_id)
-            if wt.get("success"):
-                used_wl = wt.get("used_gb", 0)
-                limit_wl = wt.get("limit_gb", 50)
-                remaining_wl = wt.get("remaining_gb", 50)
-                configs_count = wt.get("configs_count", 0)
-                is_exhausted = wt.get("is_exhausted", False)
-
-                percent_wl = (
-                    min(100, int((used_wl / limit_wl) * 100)) if limit_wl > 0 else 0
-                )
-                bar_fill_wl = int(percent_wl / 10)
-                bar_wl = "█" * bar_fill_wl + "░" * (10 - bar_fill_wl)
-
-                status_emoji = "🔴" if is_exhausted else "🟢"
-
-                whitelist_traffic = (
-                    f"\n{status_emoji} <b>Трафик обхода белых списков (глушилки):</b>\n"
-                    f"<code>[{bar_wl}] {percent_wl}%</code>\n"
-                    f"Использовано: <b>{used_wl:.2f}</b> / {limit_wl:.1f} ГБ\n"
-                    f"Осталось: <b>{remaining_wl:.2f}</b> ГБ\n"
-                    f"Конфигов: <b>{configs_count}</b>"
-                )
-            else:
-                whitelist_traffic = (
-                    "\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\nНедоступно"
-                )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"Failed to get whitelist bypass traffic: {e}")
-            whitelist_traffic = (
-                "\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\nОшибка загрузки"
+    if panel_sub_id:
+        if whitelist_traffic == "fetch":
+            wt = _fetch_whitelist_traffic(panel_sub_id)
+            whitelist_traffic_text = _format_whitelist_traffic(
+                wt if wt is not None else None
             )
+            if wt is None:
+                whitelist_traffic_text = (
+                    "\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\n"
+                    "50.00 / 50.0 ГБ (нет конфигов)"
+                )
+        elif isinstance(whitelist_traffic, dict):
+            whitelist_traffic_text = _format_whitelist_traffic(whitelist_traffic)
+        else:  # None — данные ещё грузятся
+            whitelist_traffic_text = WHITELIST_LOADING_TEXT
     else:
-        whitelist_traffic = (
+        whitelist_traffic_text = (
             "\n⚪ <b>Трафик обхода белых списков (глушилки):</b>\n"
             "50.00 / 50.0 ГБ (нет конфигов)"
         )
@@ -307,7 +363,7 @@ def build_subscription_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         f"🧪 <b>Тестовые конфиги:</b> {'✅ Доступ' if active_sub.get('test_configs_enabled') else '❌ Нет доступа'}\n"
         f"⏱ <b>До:</b> {safe_date_format(active_sub.get('ends_at'))}"
         + traffic
-        + whitelist_traffic
+        + whitelist_traffic_text
     )
 
     keyboard = [

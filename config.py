@@ -42,6 +42,10 @@ REQUIRED_CHANNEL_USERNAME = os.getenv("REQUIRED_CHANNEL_USERNAME", "@AvavaVpn")
 SUPPORT_USERNAME = os.getenv("SUPPORT_USERNAME", "@support")
 DEFAULT_TRIAL_DAYS = int(os.getenv("DEFAULT_TRIAL_DAYS", "3"))
 
+# Redis cache
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
+SUBSCRIPTION_CACHE_TTL = int(os.getenv("SUBSCRIPTION_CACHE_TTL", "15"))  # seconds
+
 # Monitoring Settings
 MONITOR_INTERVAL_SECONDS = int(
     os.getenv("MONITOR_INTERVAL_SECONDS", "300")
