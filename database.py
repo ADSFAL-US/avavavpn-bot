@@ -169,6 +169,14 @@ class Database:
                 "ALTER TABLE subscriptions ADD COLUMN panel_subscription_id INTEGER"
             )
 
+        # Migration: add trial_nudge_muted column to users table (trial follow-up opt-out)
+        try:
+            cursor.execute("SELECT trial_nudge_muted FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            cursor.execute("ALTER TABLE users ADD COLUMN trial_nudge_muted INTEGER DEFAULT 0")
+            self.conn.commit()
+            logger.info("Added trial_nudge_muted column to users table")
+
         # Migration: add pending promo columns to users table if they don't exist
         try:
             cursor.execute("SELECT pending_discount_percent FROM users LIMIT 1")
@@ -554,6 +562,48 @@ class Database:
             )
         self.conn.commit()
         return cursor.rowcount
+
+    def get_stale_trial_users(self) -> list[dict]:
+        """Find users with an expired trial who never upgraded and never cancelled.
+
+        Criteria:
+        - has a trial subscription with status='active' but ends_at in the past
+          (i.e. the trial is still "hanging" on them, not manually cancelled);
+        - has no subscription on any other tariff (never upgraded);
+        - not banned;
+        - has not muted trial follow-up nudges.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT DISTINCT u.user_id
+            FROM users u
+            JOIN subscriptions s ON s.user_id = u.user_id
+            WHERE s.tariff_id = 'trial'
+              AND s.status = 'active'
+              AND s.ends_at IS NOT NULL
+              AND s.ends_at < ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM subscriptions s2
+                  WHERE s2.user_id = u.user_id
+                    AND s2.tariff_id != 'trial'
+              )
+              AND (u.banned IS NULL OR u.banned = 0)
+              AND (u.trial_nudge_muted IS NULL OR u.trial_nudge_muted = 0)
+            """,
+            (now,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def set_trial_nudge_muted(self, user_id: int, muted: bool = True) -> None:
+        """Opt the user out of (or back into) trial follow-up nudges."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE users SET trial_nudge_muted = ? WHERE user_id = ?",
+            (int(muted), user_id),
+        )
+        self.conn.commit()
 
     def update_speed(self, subscription_id: int, speed_mbps: int) -> None:
         """Update the speed for a subscription."""

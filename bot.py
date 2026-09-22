@@ -93,6 +93,12 @@ from handlers.promo import (
     handle_promo_activate,
     handle_promo_menu,
 )
+from handlers.trial_nudge import (
+    handle_trial_nudge_mute,
+    handle_trial_nudge_skip,
+    handle_trial_nudge_support,
+    schedule_trial_nudge_job,
+)
 from keyboards import (
     build_main_menu,
     build_promo_detail,
@@ -801,6 +807,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "promo_menu":
         await handle_promo_menu(update, context, user_id)
 
+    # ===== TRIAL NUDGE =====
+    elif data == "trial_nudge_skip":
+        await handle_trial_nudge_skip(update, context, user_id)
+    elif data == "trial_nudge_mute":
+        await handle_trial_nudge_mute(update, context, user_id)
+    elif data == "trial_nudge_support":
+        await handle_trial_nudge_support(update, context, user_id)
+
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log errors."""
@@ -836,6 +850,9 @@ def main():
         logger.info(
             f"📊 Panel monitoring job scheduled every {config.MONITOR_INTERVAL_SECONDS}s"
         )
+
+    # Trial follow-up nudges (09:00 and 20:00 Moscow time)
+    schedule_trial_nudge_job(app)
 
     # Run migration to populate missing panel_subscription_id
     if app_context.subscription_manager and app_context.xcontroller:
