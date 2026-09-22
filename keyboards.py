@@ -177,21 +177,33 @@ def build_tariff_detail(
 
     # Features
     features = []
-    features.append(f"⚡ <b>Скорость:</b> {tariff['speed']}")
+    features.append(f"💰 <b>Цена:</b> {price}")
+    features.append(f"⏱ <b>Срок:</b> {tariff['duration_days']} дней")
     if tariff["traffic_limit_gb"]:
         features.append(f"📊 <b>Трафик:</b> до {tariff['traffic_limit_gb']} ГБ")
     else:
         features.append("📊 <b>Трафик:</b> без ограничений")
-    features.append(f"⏱ <b>Срок:</b> {tariff['duration_days']} дней")
+    if tariff.get("whitelist_limit_gb"):
+        features.append(
+            f"🌐 <b>Обход белых списков:</b> до {tariff['whitelist_limit_gb']} ГБ"
+        )
+    if tariff.get("devices_per_config"):
+        features.append(
+            f"📱 <b>Устройства:</b> до {tariff['devices_per_config']} на каждой конфигурации"
+        )
 
     # Perks with colors
     perks = []
-    perks.append("✅ Warp" if tariff["warp"] else "❌ Warp")
-    perks.append(
-        "✅ Тестовые конфиги"
-        if tariff.get("test_configs", False)
-        else "❌ Тестовые конфиги"
-    )
+    if tariff.get("one_time_only"):
+        perks.append("🔁 Только единоразово (без продления)")
+    if tariff["warp"]:
+        perks.append("✅ Warp over VLESS конфиги")
+    if tariff.get("smart_configs"):
+        perks.append("✅ Smart конфиги")
+    if tariff.get("test_configs"):
+        perks.append("✅ Alpha и Beta конфиги (тестовые)")
+    else:
+        perks.append("✅ Стандартные стабильные (stable) конфиги")
 
     # Current subscription note
     current = ""

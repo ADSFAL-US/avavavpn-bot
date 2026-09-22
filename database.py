@@ -19,7 +19,15 @@ TARIFFS = {
     "trial": {
         "id": "trial",
         "name": "🧪 Пробник",
-        "description": "Бесплатный тестовый тариф\n• Скорость: 50 Мбит/с\n• Трафик: до 50 ГБ\n• Срок: 3 дня\n• Warp: нет\n• Доступ к тестовым конфигам: нет",
+        "description": (
+            "Бесплатный тестовый тариф\n"
+            "• Цена: 0 рублей\n"
+            "• Срок: 3 дня\n"
+            "• Применяется единоразово — продлить или повторить нельзя\n"
+            "• Трафик: до 50 ГБ на весь период\n"
+            "• Конфиги: только стандартные стабильные (stable)\n"
+            "• Обход белых списков: нет"
+        ),
         "price": 0,
         "currency": "бесплатно",
         "speed": "50 Мбит/с",
@@ -27,13 +35,25 @@ TARIFFS = {
         "traffic_limit_gb": 50,
         "duration_days": 3,
         "warp": False,
-        "test_configs": False,  # No access to test configs
+        "test_configs": False,  # Only standard stable configs
+        "smart_configs": False,
+        "whitelist_limit_gb": None,  # No whitelist bypass
+        "devices_per_config": 1,
+        "one_time_only": True,  # Trial can only be activated once
         "preset_id": 1,  # Free/basic preset
     },
     "basic": {
         "id": "basic",
         "name": "🛡️ Базовый минимум",
-        "description": "Базовый тарифный план\n• Скорость: 50 Мбит/с\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: нет\n• Доступ к тестовым конфигам: да",
+        "description": (
+            "Базовый тарифный план\n"
+            "• Цена: 99 рублей в стоке\n"
+            "• Срок: 1 месяц\n"
+            "• Обход белых списков: до 50 ГБ\n"
+            "• Остальной трафик: безлимитный\n"
+            "• Устройства: до 5 на каждой конфигурации\n"
+            "• Конфиги: обычные stable и smart"
+        ),
         "price": 99,
         "currency": "рублей в месяц",
         "speed": "50 Мбит/с",
@@ -41,13 +61,25 @@ TARIFFS = {
         "traffic_limit_gb": None,
         "duration_days": 30,
         "warp": False,
-        "test_configs": True,  # Access to test configs
+        "test_configs": False,  # No alpha/beta test configs
+        "smart_configs": True,  # Access to smart configs
+        "whitelist_limit_gb": 50,  # Whitelist bypass traffic limit
+        "devices_per_config": 5,
+        "one_time_only": False,
         "preset_id": 2,  # Basic preset
     },
     "premium": {
         "id": "premium",
         "name": "💎 Роскошный максимум",
-        "description": "Премиум тарифный план\n• Скорость: 100 Мбит/с\n• Трафик: без ограничений\n• Срок: 1 месяц\n• Warp: да\n• Доступ к тестовым конфигам: да",
+        "description": (
+            "Премиум тарифный план\n"
+            "• Цена: 199 рублей в стоке\n"
+            "• Срок: 1 месяц\n"
+            "• Обход белых списков: до 50 ГБ в месяц\n"
+            "• Остальной трафик: не тарифицируется\n"
+            "• Конфиги: warp over vless, alpha и beta (тестовые),\n"
+            "  а также все конфигурации базового тарифа"
+        ),
         "price": 199,
         "currency": "рублей в месяц",
         "speed": "100 Мбит/с",
@@ -55,7 +87,11 @@ TARIFFS = {
         "traffic_limit_gb": None,
         "duration_days": 30,
         "warp": True,
-        "test_configs": True,  # Access to test configs
+        "test_configs": True,  # Access to alpha/beta test configs
+        "smart_configs": True,  # Access to smart configs
+        "whitelist_limit_gb": 50,  # Whitelist bypass traffic limit (per month)
+        "devices_per_config": 5,
+        "one_time_only": False,
         "preset_id": 3,  # Premium preset
     },
 }
