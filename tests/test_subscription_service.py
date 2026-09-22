@@ -96,6 +96,12 @@ class SuccessfulUpdateXC(DummyXC):
         self.updated.append({"subscription_id": subscription_id, **kwargs})
         return {"success": True}
 
+    def extend_subscription_days(self, subscription_id, extra_days):
+        self.updated.append(
+            {"subscription_id": subscription_id, "days": extra_days}
+        )
+        return {"success": True}
+
 
 class SubscriptionServiceTests(unittest.TestCase):
     def test_create_subscription_returns_success(self):
@@ -149,7 +155,7 @@ class SubscriptionServiceTests(unittest.TestCase):
         result = service.extend_subscription(1, 7)
 
         self.assertTrue(result["success"])
-        self.assertGreater(xc.updated[0]["expiry_days"], 7)
+        self.assertEqual(xc.updated[0]["days"], 7)
 
     def test_create_subscription_blocks_when_panel_unavailable(self):
         db = DummyDB()

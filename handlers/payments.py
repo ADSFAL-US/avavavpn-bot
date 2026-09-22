@@ -148,13 +148,19 @@ async def handle_subscribe(
         return
 
     # Store payment in database
-    app_context.payment_storage.create_payment_record(
+    if not app_context.payment_storage.create_payment_record(
         order_id=order_id,
         user_id=user_id,
         tariff_id=tariff_id,
         amount=amount,
         payment_id=payment_result.get("payment_id"),
-    )
+    ):
+        logger.error(f"Failed to store payment record for order {order_id}")
+        await query.edit_message_text(
+            "❌ <b>Ошибка создания платежа</b>\n\n"
+            "Не удалось сохранить платёж. Пожалуйста, попробуйте позже."
+        )
+        return
 
     # Show payment link
     payment_url = payment_result.get("payment_url")
@@ -216,7 +222,12 @@ async def handle_check_payment(
 
     # ─── Success processing (extend or new sub) ────────────────────
     async def _refund_payment_and_notify(error_message: str):
-        """Refund payment and notify the user if activation fails."""
+        """Refund payment and notify the user if activation fails.
+
+        Refund is performed FIRST, before any UI updates, so that a
+        Telegram error (e.g. 'Message is not modified') can never
+        prevent the refund from being issued.
+        """
         refund_result = app_context.yookassa.create_refund(
             payment_id,
             amount=payment_record.get("amount"),
@@ -227,22 +238,28 @@ async def handle_check_payment(
             logger.error(
                 f"Refund failed for payment {payment_id}: {refund_result['error']}"
             )
-            await query.edit_message_text(
-                "❌ <b>Ошибка возврата средств</b>\n\n"
-                "Произошла ошибка при оформлении подписки и возврате платежа. Обратитесь в поддержку.",
-                parse_mode="HTML",
-            )
+            try:
+                await query.edit_message_text(
+                    "❌ <b>Ошибка возврата средств</b>\n\n"
+                    "Произошла ошибка при оформлении подписки и возврате платежа. Обратитесь в поддержку.",
+                    parse_mode="HTML",
+                )
+            except Exception:  # noqa: BLE001 - UI failure must not mask refund error
+                logger.warning("Failed to show refund error message")
             return False
 
         refund_id = refund_result.get("refund_id")
         app_context.payment_storage.update_payment_status(
             order_id, "refunded", payment_id, refund_id
         )
-        await query.edit_message_text(
-            "❌ <b>Произошла ошибка, мы вернули средства на счет</b>\n\n"
-            "Пожалуйста, обратитесь в поддержку, если проблема повторится.",
-            parse_mode="HTML",
-        )
+        try:
+            await query.edit_message_text(
+                "❌ <b>Произошла ошибка, мы вернули средства на счет</b>\n\n"
+                "Пожалуйста, обратитесь в поддержку, если проблема повторится.",
+                parse_mode="HTML",
+            )
+        except Exception:  # noqa: BLE001 - UI failure must not mask successful refund
+            logger.warning("Failed to show refund success message")
         return True
 
     async def _process_successful_payment():
@@ -269,49 +286,16 @@ async def handle_check_payment(
                     error_msg = result.get("error", "Unknown error")
                     logger.error(f"Extension failed: {error_msg}")
 
-                    if result.get("local_db_updated"):
-                        sub_link = (
-                            result.get("sub_link")
-                            or app_context.subscription_manager.get_user_subscription_link(
-                                user_id
-                            )
-                            or "N/A"
-                        )
-                        text = (
-                            f"⚠️ <b>Подписка продлена локально, но синхронизация с панелью не удалась</b>\n\n"
-                            f"📌 {tariff['name'] if tariff else '—'}\n"
-                            f"⏱ +{extra_days} дней\n\n"
-                            f"🔗 <b>Ваша ссылка для подключения:</b>\n"
-                            f"<code>{sub_link}</code>\n\n"
-                            f"❗ <i>Панель будет обработана позднее, но уже сейчас подписка сохранена локально.</i>\n"
-                            f"<i>Если проблема повторится — обратитесь в поддержку.</i>"
-                        )
-                    else:
-                        text = "❌ <b>Ошибка продления подписки</b>\n\nОбратитесь в поддержку."
-                        sub_link = (
-                            result.get("sub_link")
-                            or app_context.subscription_manager.get_user_subscription_link(
-                                user_id
-                            )
-                            or "N/A"
-                        )
-
-                    keyboard = [
-                        [
-                            InlineKeyboardButton(
-                                "📋 Инструкция по настройке", url=sub_link
-                            )
-                        ]
-                        if sub_link and sub_link != "N/A"
-                        else [],
-                        [btn("📊 Моя подписка", "menu_subscription"), back_btn()],
-                    ]
-                    await query.edit_message_text(
-                        text,
-                        parse_mode="HTML",
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                    )
+                    # Refund FIRST, before any UI updates (see _refund_payment_and_notify)
                     await _refund_payment_and_notify(error_msg)
+
+                    if result.get("local_db_updated"):
+                        # Local DB was extended but panel sync failed — warn user
+                        # (refund was already issued above; business decision needed)
+                        logger.warning(
+                            f"Order {order_id}: local DB extended but panel sync failed, "
+                            f"refund issued — subscription may be extended for free"
+                        )
                     return
 
                 sub_link = (
@@ -343,14 +327,11 @@ async def handle_check_payment(
                 logger.error(
                     f"Error extending subscription from order_id {order_id}: {e}"
                 )
-                await query.edit_message_text(
-                    "❌ Ошибка продления подписки. Обратитесь в поддержку."
+                # Refund: order_id is malformed and subscription was NOT extended
+                await _refund_payment_and_notify(
+                    f"Malformed extend order_id: {order_id}"
                 )
-
-            # Consume any accumulated promo discount after successful payment
-            db.clear_pending_discount(user_id)
-            db.reward_referrer(user_id, payment_record.get("tariff_id", ""))
-            return
+                return
 
         # ─── New subscription (not extend) ────────────────────────────
         tariff_id = payment_record.get("tariff_id")
@@ -362,13 +343,16 @@ async def handle_check_payment(
         result = await create_paid_subscription(
             update, user_id, tariff_id, tariff, payment_id
         )
-        if result is False or (
-            isinstance(result, dict) and not result.get("success", True)
+        if not (
+            isinstance(result, dict) and result.get("success")
         ):
+            # Failure (including None return or exception inside the handler):
+            # refund the payment and notify the user.
+            error_detail = (
+                result.get("error") if isinstance(result, dict) else "Unknown error"
+            )
             await _refund_payment_and_notify(
-                result.get("error")
-                if isinstance(result, dict)
-                else "Subscription activation failed"
+                f"Subscription activation failed: {error_detail}"
             )
             return
 
@@ -557,7 +541,9 @@ async def handle_pay_change(
         return
 
     # Create payment for tariff change
-    order_id = f"change_{user_id}_{sub_id}_{new_tariff_id}"
+    # Unique order_id (with uuid) — required for YooKassa Idempotence-Key
+    # and to avoid UNIQUE constraint collisions in the payments table.
+    order_id = f"change_{user_id}_{sub_id}_{new_tariff_id}_{uuid.uuid4().hex[:8]}"
 
     payment_result = app_context.yookassa.create_payment(
         amount=new_tariff["price"],
@@ -575,13 +561,19 @@ async def handle_pay_change(
         return
 
     # Store payment
-    app_context.payment_storage.create_payment_record(
+    if not app_context.payment_storage.create_payment_record(
         order_id=order_id,
         user_id=user_id,
         tariff_id=new_tariff_id,
         amount=new_tariff["price"],
         payment_id=payment_result.get("payment_id"),
-    )
+    ):
+        logger.error(f"Failed to store payment record for order {order_id}")
+        await query.edit_message_text(
+            "❌ <b>Ошибка создания платежа</b>\n\n"
+            "Не удалось сохранить платёж. Пожалуйста, попробуйте позже."
+        )
+        return
 
     # Show payment link
     payment_url = payment_result.get("payment_url")
@@ -667,19 +659,67 @@ async def handle_check_change_payment(
 
         parts = order_id.split("_")
         if len(parts) >= 4:
-            sub_id = int(parts[2])
+            try:
+                sub_id = int(parts[2])
+            except ValueError:
+                logger.error(f"Malformed change order_id: {order_id}")
+                await query.edit_message_text("❌ Ошибка данных заказа")
+                return
             new_tariff_id = parts[3]
             new_tariff = TARIFFS.get(new_tariff_id)
 
-            if new_tariff:
-                app_context.payment_storage.update_payment_status(
-                    order_id, "completed", payment_id
-                )
-                await handle_tariff_change(
-                    update, user_id, sub_id, new_tariff_id, new_tariff
-                )
-            else:
+            if not new_tariff:
                 await query.edit_message_text("❌ Тариф не найден")
+                return
+
+            change_result = await handle_tariff_change(
+                update, user_id, sub_id, new_tariff_id, new_tariff
+            )
+
+            if not (isinstance(change_result, dict) and change_result.get("success")):
+                # Tariff change failed — refund the payment
+                error_detail = (
+                    change_result.get("error")
+                    if isinstance(change_result, dict)
+                    else "Unknown error"
+                )
+                logger.error(
+                    f"Tariff change failed after payment {payment_id}: {error_detail}"
+                )
+                refund_result = app_context.yookassa.create_refund(
+                    payment_id,
+                    amount=payment_record.get("amount"),
+                    description=f"Tariff change failed: {error_detail}",
+                )
+                if refund_result.get("error"):
+                    logger.error(
+                        f"Refund failed for change payment {payment_id}: "
+                        f"{refund_result['error']}"
+                    )
+                    await query.edit_message_text(
+                        "❌ <b>Ошибка возврата средств</b>\n\n"
+                        "Смена тарифа не удалась и возврат платежа не выполнен. "
+                        "Обратитесь в поддержку.",
+                        parse_mode="HTML",
+                    )
+                    return
+                app_context.payment_storage.update_payment_status(
+                    order_id,
+                    "refunded",
+                    payment_id,
+                    refund_result.get("refund_id"),
+                )
+                await query.edit_message_text(
+                    "❌ <b>Смена тарифа не удалась, мы вернули средства на счет</b>\n\n"
+                    "Пожалуйста, обратитесь в поддержку, если проблема повторится.",
+                    parse_mode="HTML",
+                )
+                return
+
+            # Mark completed ONLY after successful tariff change
+            app_context.payment_storage.update_payment_status(
+                order_id, "completed", payment_id
+            )
         else:
             await query.edit_message_text("❌ Ошибка данных заказа")
     elif status == PAYMENT_STATUS_CANCELLED:
@@ -748,13 +788,19 @@ async def handle_extend(
             return
 
         # Store payment
-        app_context.payment_storage.create_payment_record(
+        if not app_context.payment_storage.create_payment_record(
             order_id=order_id,
             user_id=user_id,
             tariff_id=tariff_id,
             amount=amount,
             payment_id=payment_result.get("payment_id"),
-        )
+        ):
+            logger.error(f"Failed to store payment record for order {order_id}")
+            await query.edit_message_text(
+                "❌ <b>Ошибка создания платежа</b>\n\n"
+                "Не удалось сохранить платёж. Пожалуйста, попробуйте позже."
+            )
+            return
 
         # Show payment link
         payment_url = payment_result.get("payment_url")

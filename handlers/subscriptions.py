@@ -86,7 +86,11 @@ async def create_paid_subscription(
                 f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
                 parse_mode="HTML",
             )
-            return
+            return {
+                "success": False,
+                "error": "Subscription service unavailable",
+                "manual_action_required": True,
+            }
 
         result = app_context.subscription_manager.create_subscription(
             user_id=user_id,
@@ -112,7 +116,11 @@ async def create_paid_subscription(
                     f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
                     parse_mode="HTML",
                 )
-            return
+            return {
+                "success": False,
+                "error": error,
+                "manual_action_required": result.get("manual_action_required", False),
+            }
 
         sub_link = result.get("sub_link", "N/A")
         text = (
@@ -132,14 +140,20 @@ async def create_paid_subscription(
         await query.edit_message_text(
             text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return {"success": True, "sub_link": sub_link}
 
-    except Exception:
+    except Exception as exc:
         logger.exception("Error creating paid subscription")
         await query.edit_message_text(
             f"❌ <b>Ошибка активации</b>\n\n"
             f"Пожалуйста, обратитесь в поддержку с ID платежа: <code>{payment_id}</code>",
             parse_mode="HTML",
         )
+        return {
+            "success": False,
+            "error": str(exc),
+            "manual_action_required": True,
+        }
 
 
 async def handle_tariff_change(
@@ -151,7 +165,7 @@ async def handle_tariff_change(
     try:
         if not app_context.subscription_manager:
             await query.edit_message_text("❌ Сервис подписок недоступен")
-            return
+            return {"success": False, "error": "Subscription service unavailable"}
 
         result = app_context.subscription_manager.change_subscription(
             sub_id, new_tariff_id
@@ -171,7 +185,11 @@ async def handle_tariff_change(
                 await query.edit_message_text(
                     f"❌ <b>Ошибка смены тарифа</b>\n\n{error}", parse_mode="HTML"
                 )
-            return
+            return {
+                "success": False,
+                "error": error,
+                "manual_action_required": result.get("manual_action_required", False),
+            }
 
         sub_link = result.get("sub_link", "N/A")
         old_tariff_name = TARIFFS.get(result.get("old_tariff", ""), {}).get(
@@ -195,7 +213,9 @@ async def handle_tariff_change(
         await query.edit_message_text(
             text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return {"success": True, "sub_link": sub_link}
 
-    except Exception as e:
+    except Exception as exc:
         logger.exception("Error changing tariff")
-        await query.edit_message_text(f"❌ <b>Ошибка:</b> {e!s}")
+        await query.edit_message_text(f"❌ <b>Ошибка:</b> {exc!s}")
+        return {"success": False, "error": str(exc)}

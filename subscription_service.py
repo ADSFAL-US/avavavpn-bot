@@ -204,31 +204,12 @@ class SubscriptionService:
         panel_id = sub.get("panel_subscription_id")
         if panel_id:
             try:
-                updated_sub = self.db.get_subscription_by_id(subscription_id)
-                if updated_sub and updated_sub.get("ends_at"):
-                    ends_at_str = updated_sub.get("ends_at")
-                    try:
-                        new_end = datetime.fromisoformat(ends_at_str)
-                        if new_end.tzinfo is None:
-                            new_end = new_end.replace(tzinfo=timezone.utc)
-                        # Calculate total days from now to NEW expiry (old expiry + extra_days)
-                        remaining_days = max(
-                            1, (new_end - datetime.now(timezone.utc)).days
-                        )
-                        total_expiry_days = remaining_days + extra_days
-                    except (ValueError, TypeError):
-                        total_expiry_days = extra_days
-                else:
-                    total_expiry_days = extra_days
-
-                self.xc.update_subscription(
+                # Use the dedicated extend endpoint: it ADDS days to the current
+                # expiry instead of resetting it, and works even when the new
+                # total equals the old value (no-op bug in update_subscription).
+                self.xc.extend_subscription_days(
                     subscription_id=panel_id,
-                    expiry_days=1,
-                )
-
-                self.xc.update_subscription(
-                    subscription_id=panel_id,
-                    expiry_days=total_expiry_days,
+                    extra_days=extra_days,
                 )
             except xcontroller_client.XControllerAPIError as exc:
                 logger.warning(

@@ -225,6 +225,26 @@ class XControllerClient:
         """Force sync subscription with 3x-ui panels."""
         return self._make_request("POST", f"/api/sync/{subscription_id}")
 
+    def extend_subscription_days(self, subscription_id: int, extra_days: int) -> dict[str, Any]:
+        """Extend subscription expiry by adding days to the current expiry.
+
+        Unlike update_subscription(expiry_days=N), which RESETS the expiry to
+        N days from now (and is a no-op when the value is unchanged), this
+        endpoint adds extra_days on top of the current remaining time.
+
+        Args:
+            subscription_id: Subscription ID in the panel (X-Controller)
+            extra_days: Number of days to add
+
+        Returns:
+            Dict with success status and updated subscription data
+        """
+        return self._make_request(
+            "POST",
+            f"/api/subscriptions/{subscription_id}/extend",
+            json_data={"days": extra_days},
+        )
+
     # ============ Presets API ============
 
     def list_presets(self) -> list[dict[str, Any]]:
@@ -566,20 +586,17 @@ class SubscriptionManager:
                 total_expiry_days = extra_days
 
             try:
-                self.xc.update_subscription(
+                # Use the dedicated extend endpoint: it ADDS days to the current
+                # expiry instead of resetting it, and works even when the new
+                # total equals the old value (no-op bug in update_subscription).
+                self.xc.extend_subscription_days(
                     subscription_id=panel_id,
-                    expiry_days=1,
+                    extra_days=extra_days,
                 )
-                self.xc.update_subscription(
-                    subscription_id=panel_id,
-                    expiry_days=total_expiry_days,
-                )
-                # в начале сбрасываем срок подписки, что бы при изменении 30 на 30 не получилось не продленной подписки
                 logger.info(
-                    f"Extended panel subscription {panel_id} by {extra_days} days "
-                    f"(total_expiry_days={total_expiry_days})"
+                    f"Extended panel subscription {panel_id} by {extra_days} days"
                 )
-            except (requests.RequestException, ValueError) as e:
+            except (XControllerAPIError, requests.RequestException, ValueError) as e:
                 logger.error(f"Failed to update x-controller for extension: {e}")
                 return {
                     "success": False,
@@ -625,7 +642,12 @@ class SubscriptionManager:
 
             self.db.cancel_subscription(subscription_id, sub["user_id"])
             return True
-        except (requests.RequestException, ValueError, sqlite3.Error) as e:
+        except (
+            XControllerAPIError,
+            requests.RequestException,
+            ValueError,
+            sqlite3.Error,
+        ) as e:
             logger.error(f"Failed to cancel subscription: {e}")
             return False
 
@@ -738,7 +760,12 @@ class SubscriptionManager:
                 "new_tariff": new_tariff_id,
             }
 
-        except (requests.RequestException, ValueError, sqlite3.Error) as e:
+        except (
+            XControllerAPIError,
+            requests.RequestException,
+            ValueError,
+            sqlite3.Error,
+        ) as e:
             logger.exception("Failed to change subscription")
             return {"success": False, "error": str(e)}
 
