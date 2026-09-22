@@ -570,21 +570,6 @@ class SubscriptionManager:
         panel_id = updated_sub.get("panel_subscription_id")
 
         if panel_id:
-            from datetime import datetime
-
-            ends_at_str = updated_sub.get("ends_at")
-            if ends_at_str:
-                try:
-                    clean = ends_at_str.split("+")[0]
-                    new_end = datetime.fromisoformat(clean)
-                    # Calculate total days from now to NEW expiry (old expiry + extra_days)
-                    remaining_days = max(1, (new_end - datetime.now(timezone.utc)).days)
-                    total_expiry_days = remaining_days + extra_days
-                except (ValueError, TypeError):
-                    total_expiry_days = extra_days
-            else:
-                total_expiry_days = extra_days
-
             try:
                 # Use the dedicated extend endpoint: it ADDS days to the current
                 # expiry instead of resetting it, and works even when the new

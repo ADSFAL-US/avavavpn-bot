@@ -36,7 +36,7 @@ async def _safe_edit(query, text: str, markup: InlineKeyboardMarkup) -> None:
     """Edit message, swallowing the harmless 'message is not modified' error."""
     try:
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=markup)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         if "not modified" not in str(e):
             raise
 
