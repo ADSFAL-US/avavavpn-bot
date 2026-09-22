@@ -1,3 +1,4 @@
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -53,9 +54,26 @@ class MonitoringTests(unittest.IsolatedAsyncioTestCase):
         context = SimpleNamespace()
         monitoring_handlers._panel_status_cache = {"data": [], "expiry": 0}
         await monitoring_handlers.handle_user_monitor_menu(update, context, 1)
+        # With no data at all the menu renders a loading placeholder
         self.assertIn(
-            "Серверов не настроено", update.callback_query.edited_messages[0]["text"]
+            "Загружаем данные", update.callback_query.edited_messages[0]["text"]
         )
+
+    async def test_handle_user_monitor_menu_uses_stale_cache(self):
+        update = DummyUpdate()
+        context = SimpleNamespace()
+        # Stale in-memory data must be rendered immediately (stale-while-revalidate)
+        monitoring_handlers._panel_status_cache = {
+            "data": [
+                {
+                    "panel": {"name": "Alpha"},
+                    "health": {"status": "healthy", "latency_ms": 12},
+                }
+            ],
+            "expiry": time.time() + 60,
+        }
+        await monitoring_handlers.handle_user_monitor_menu(update, context, 1)
+        self.assertIn("Alpha", update.callback_query.edited_messages[0]["text"])
 
     async def test_clear_panel_alert_state_clears_all(self):
         monitoring_handlers._panel_alert_state["panel1"] = (

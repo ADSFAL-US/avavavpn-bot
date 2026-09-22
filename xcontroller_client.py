@@ -67,6 +67,7 @@ class XControllerClient:
         endpoint: str,
         json_data: dict | None = None,
         params: dict | None = None,
+        timeout: int | None = None,
     ) -> dict[str, Any]:
         """
         Make authenticated request to API.
@@ -76,6 +77,7 @@ class XControllerClient:
             endpoint: API endpoint (without base URL)
             json_data: JSON body for POST/PUT
             params: Query parameters
+            timeout: Optional per-request timeout override (seconds)
 
         Returns:
             Parsed JSON response
@@ -92,7 +94,7 @@ class XControllerClient:
                 url=url,
                 json=json_data,
                 params=params,
-                timeout=self.timeout,
+                timeout=timeout or self.timeout,
                 headers={"Content-Type": "application/json"},
             )
 
@@ -296,7 +298,11 @@ class XControllerClient:
             Health check result with status, latency, error if any
         """
         try:
-            return self._make_request("GET", f"/api/panels/{panel_id}/health")
+            return self._make_request(
+                "GET",
+                f"/api/panels/{panel_id}/health",
+                timeout=config.PANEL_HEALTH_TIMEOUT,
+            )
         except Exception as e:  # noqa: BLE001
             return {"status": "unhealthy", "error": str(e), "panel_id": panel_id}
 

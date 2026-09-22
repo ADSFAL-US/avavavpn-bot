@@ -82,3 +82,8 @@ def delete(key: str) -> None:
 def subscription_whitelist_key(panel_subscription_id) -> str:
     """Cache key for the whitelist-bypass traffic of a subscription."""
     return f"sub:wl:{panel_subscription_id}"
+
+
+def panel_statuses_key() -> str:
+    """Global (user-independent) cache key for all panel statuses."""
+    return "panels:statuses"

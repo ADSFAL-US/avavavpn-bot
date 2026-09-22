@@ -45,6 +45,10 @@ DEFAULT_TRIAL_DAYS = int(os.getenv("DEFAULT_TRIAL_DAYS", "3"))
 # Redis cache
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 SUBSCRIPTION_CACHE_TTL = int(os.getenv("SUBSCRIPTION_CACHE_TTL", "15"))  # seconds
+PANEL_STATUS_CACHE_TTL = int(os.getenv("PANEL_STATUS_CACHE_TTL", "15"))  # seconds
+# Shorter timeout for panel health checks so a dead panel doesn't hang
+# the refresh for the full default 30s request timeout.
+PANEL_HEALTH_TIMEOUT = int(os.getenv("PANEL_HEALTH_TIMEOUT", "10"))
 
 # Monitoring Settings
 MONITOR_INTERVAL_SECONDS = int(
